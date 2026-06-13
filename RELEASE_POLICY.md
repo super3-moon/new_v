@@ -27,3 +27,5 @@
 ## Safety Rule
 - Do not delete core source files during packaging.
 - Do not write release outputs outside `E:\test\release\...`.
+- Do not commit release binaries to Git; publish binaries through GitHub Releases when needed.
+- Do not mix packaging changes with source-code feature changes in the same commit or branch.

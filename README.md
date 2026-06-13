@@ -1,5 +1,7 @@
 # VMD + Multiwfn 风格脚本生成器
 
+GitHub 仓库：`super3-moon/new_v`
+
 这是一个 Windows 桌面辅助工具，用于生成 VMD + Multiwfn 自动工作流脚本。用户在图形界面中选择 Multiwfn、VMD 路径和可视化风格后，软件会生成可双击运行的 `.cmd` 脚本。
 
 ## 当前入口
@@ -44,3 +46,5 @@ powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 ## 协作规则
 
 修改文件前先向 `THREAD_SYNC_LOG.md` 写入 `START`，完成后写入 `DONE`。新增或删除文件时同步更新 `工程结构.md`。
+
+Git/GitHub 分支、提交、推送和 release 协作流程见 `GIT_GITHUB_WORKFLOW.md`。
