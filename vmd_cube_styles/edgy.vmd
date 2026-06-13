@@ -1,0 +1,198 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gbk" />
+  <title>提示信息 - 计算化学公社</title>
+
+<meta name="keywords" content="" />
+<meta name="description" content=",计算化学公社" />
+<meta name="generator" content="Discuz! X3.3" />
+<meta name="author" content="Discuz! Team and Comsenz UI Team" />
+<meta name="copyright" content="2001-2017 Comsenz Inc." />
+<meta name="MSSmartTagsPreventParsing" content="True" />
+<meta http-equiv="MSThemeCompatible" content="Yes" />
+<base href="http://bbs.keinsci.com/" /><link rel="stylesheet" type="text/css" href="data/cache/style_1_common.css?t5Q" /><link rel="stylesheet" type="text/css" href="data/cache/style_1_forum_attachment.css?t5Q" /><script type="text/javascript">var STYLEID = '1', STATICURL = 'static/', IMGDIR = 'static/image/common', VERHASH = 't5Q', charset = 'gbk', discuz_uid = '0', cookiepre = 'G1rX_2132_', cookiedomain = '', cookiepath = '/', showusercard = '1', attackevasive = '0', disallowfloat = 'newthread|tradeorder|debate|nav|usergroups|task', creditnotice = '1|威望|,2|eV|', defaultstyle = '', REPORTURL = 'aHR0cDovL2Jicy5rZWluc2NpLmNvbS9mb3J1bS5waHA/bW9kPWF0dGFjaG1lbnQmYWlkPU1USTNNRFUwZkdVNU5qWTRPREF3ZkRFM056VXlNamd4TWpCOE1IdzFPREF3T1ElM0QlM0Q=', SITEURL = 'http://bbs.keinsci.com/', JSPATH = 'data/cache/', CSSPATH = 'data/cache/style_', DYNAMICURL = '';</script>
+<script src="data/cache/common.js?t5Q" type="text/javascript"></script>
+<meta name="application-name" content="计算化学公社" />
+<meta name="msapplication-tooltip" content="计算化学公社" />
+<meta name="msapplication-task" content="name=论坛首页;action-uri=http://bbs.keinsci.com/forum.php;icon-uri=http://bbs.keinsci.com/static/image/common/bbs.ico" />
+<script src="data/cache/forum.js?t5Q" type="text/javascript"></script>
+</head>
+
+<body id="nv_forum" class="pg_attachment" onkeydown="if(event.keyCode==27) return false;">
+<div id="append_parent"></div><div id="ajaxwaitid"></div>
+<!--<p style="text-align:center; padding-left: 120px; padding-right: 120px; padding-top: 10px;"><a href="http://bbs.keinsci.com" target="_blank" style="font-size: 42px; color:purple; font-weight:bold">在12月20-23日期间，本论坛仅限等级≥level 4的成员发贴，带来的不便请谅解！（此期间请勿给管理员Sobereva发私信问学术问题）</a></p>-->
+<!--<p style="text-align:center; padding-left: 120px; padding-right: 120px; padding-top: 10px;"><a href="http://bbs.keinsci.com" target="_blank" style="font-size: 32px; color:blue; font-weight:bold">在6月27-7月1日期间，本论坛仅限等级≥level 3的成员发新的主题，带来的不便请谅解！</a></p>-->
+<!--<p style="text-align:center; padding-left: 120px; padding-right: 120px; padding-top: 10px;"><a href="http://www.keinsci.com/workshop/4KFP" target="_blank" style="font-size: 37px; color:red; font-weight:bold">“第4届北京科音第一性原理与CP2K培训班” 将于4月19-22日于北京举办。这是全面、完整、深入、系统性学习第一性原理计算和CP2K使用的一年一度的关键的机会，请点击此链接查看详情和报名方式，欢迎参加！</a></p>-->
+    <!--<p style="text-align:center; padding-left: 120px; padding-right: 120px; padding-top: 10px;"><a href="http://www.keinsci.com/workshop/2KAQC" target="_blank" style="font-size: 30px; color:red; font-weight:bold">“第2届北京科音高级量子化学培训班” 将于10月11至14日于北京举行，这是一次性充分学习各种高级量子化学计算方法、显著提高研究深度和广度、成为量子化学研究高手的极难得的机会！报名正在进行中，请点击此链接查看详情，欢迎参加！</a></p>-->
+    <!--<p style="text-align:center; padding-left: 120px; padding-right: 120px; padding-top: 10px;"><a href="http://www.keinsci.com/workshop/17KGMX" target="_blank" style="font-size: 35px; color:red; font-weight:bold">“第17届北京科音分子动力学与GROMACS培训班” 将于11月1日至4日于北京举办。这是一次性全面、系统学习分子动力学模拟知识和最流行的分子动力学程序GROMACS的关键机会！报名正在进行中，请点击此链接查看详情，欢迎参加！</a></p>-->
+    <!--<p style="text-align:center; padding-left: 140px; padding-right: 140px; padding-top: 10px;"><a href="http://www.keinsci.com/workshop/23KEQC" target="_blank" style="font-size: 36px; color:red; font-weight:bold">“第23届北京科音初级量子化学培训班” 将于5月24至27日于北京举办，是初学者真正从头一次性完整、系统性学习量子化学计算，从而能很快上手量子化学研究的重要机会，比起自己摸索、鼓捣能少走无数弯路。报名正在进行中，请点击此链接查看，欢迎参加！</a></p>-->
+    <!--<p style="text-align:center; padding-left: 140px; padding-right: 140px; padding-top: 10px;"><a href="http://www.keinsci.com/workshop/12KBQC" target="_blank" style="font-size: 35px; color:red; font-weight:bold">“第12届北京科音中级量子化学培训班” 将于7月19至24日于北京举办，由公社社长Sobereva讲授。这是量子化学研究者充分利用暑期时间全面、大幅提升综合研究水平，成为计算经验十分丰富的专业内行的一年一度的重要的机会！详情和报名方式请点击此链接查看，欢迎参加！</a></p>-->
+<div id="toptb" class="cl">
+<div class="wp">
+<div class="z"><a href="http://bbs.keinsci.com/forum.php?mod=viewthread&tid=144&extra=page%3D1"  style="font-weight: bold;text-decoration: underline;color: purple">捐赠本论坛 (Donate this site)</a></div>
+<div class="y">
+<a id="switchblind" href="javascript:;" onclick="toggleBlind(this)" title="开启辅助访问" class="switchblind">开启辅助访问</a>
+<a href="javascript:;" id="switchwidth" onclick="widthauto(this)" title="切换到宽版" class="switchwidth">切换到宽版</a>
+</div>
+</div>
+</div>
+
+<div id="qmenu_menu" class="p_pop blk" style="display: none;">
+<div class="ptm pbw hm">
+请 <a href="javascript:;" class="xi2" onclick="lsSubmit()"><strong>登录</strong></a> 后使用快捷导航<br />没有帐号？<a href="member.php?mod=CCC_regst" class="xi2 xw1">注册 Register</a>
+</div>
+<div id="fjump_menu" class="btda"></div></div><div id="hd">
+<div class="wp">
+<div class="hdc cl"><h2><a href="./" title="计算化学公社"><img src="static/image/common/logo.png" alt="计算化学公社" border="0" /></a></h2><script src="data/cache/logging.js?t5Q" type="text/javascript"></script>
+<form method="post" autocomplete="off" id="lsform" action="member.php?mod=logging&amp;action=login&amp;loginsubmit=yes&amp;infloat=yes&amp;lssubmit=yes" onsubmit="pwmd5('ls_password');return lsSubmit();">
+<div class="fastlg cl">
+<span id="return_ls" style="display:none"></span>
+<div class="y pns">
+<table cellspacing="0" cellpadding="0">
+<tr>
+<td>
+<span class="ftid">
+<select name="fastloginfield" id="ls_fastloginfield" width="40" tabindex="900">
+<option value="username">用户名 Username</option>
+<option value="email">Email</option>
+</select>
+</span>
+<script type="text/javascript">simulateSelect('ls_fastloginfield')</script>
+</td>
+<td><input type="text" name="username" id="ls_username" autocomplete="off" class="px vm" tabindex="901" /></td>
+<td class="fastlg_l"><label for="ls_cookietime"><input type="checkbox" name="cookietime" id="ls_cookietime" class="pc" value="2592000" tabindex="903" />自动登录 Automatic login</label></td>
+<td>&nbsp;<a href="javascript:;" onclick="showWindow('login', 'member.php?mod=logging&action=login&viewlostpw=1')">找回密码 Forget password</a></td>
+</tr>
+<tr>
+<td><label for="ls_password" class="z psw_w">密码 Password</label></td>
+<td><input type="password" name="password" id="ls_password" class="px vm" autocomplete="off" tabindex="902" /></td>
+<td class="fastlg_l"><button type="submit" class="pn vm" tabindex="904" style="width: 130px;"><em>登录 Login</em></button></td>
+<td>&nbsp;<a href="member.php?mod=CCC_regst" class="xi2 xw1">注册 Register</a></td>
+</tr>
+</table>
+<input type="hidden" name="quickforward" value="yes" />
+<input type="hidden" name="handlekey" value="ls" />
+</div>
+</div>
+</form>
+
+<script src="data/cache/md5.js?t5Q" type="text/javascript" reload="1"></script>
+</div>
+
+<div id="nv">
+<a href="javascript:;" id="qmenu" onmouseover="delayShow(this, function () {showMenu({'ctrlid':'qmenu','pos':'34!','ctrlclass':'a','duration':2});showForummenu();})">快捷导航</a>
+<ul><li id="mn_N33f7" ><a href="http://www.keinsci.com" hidefocus="true" target="_blank"   style="font-weight: bold;color: yellow">北京科音官网</a></li><li id="mn_N513e" ><a href="http://www.keinsci.com/workshop.html" hidefocus="true"   style="color: yellow">计算化学培训班</a></li><li class="a" id="mn_forum" ><a href="forum.php" hidefocus="true" title="培训班"  >论坛首页<span>培训班</span></a></li><li id="mn_F102" ><a href="forum-103-1.html" hidefocus="true"  >量子化学</a></li><li id="mn_F112" ><a href="forum-112-1.html" hidefocus="true"  >波函数分析与Multiwfn</a></li><li id="mn_N4947" ><a href="forum-104-1.html" hidefocus="true"  >分子模拟</a></li><li id="mn_N53aa" ><a href="forum-105-1.html" hidefocus="true"  >第一性原理</a></li><li id="mn_F41" ><a href="http://bbs.keinsci.com/forum-67-1.html" hidefocus="true"  >灌水与杂谈</a></li><li id="mn_F39" ><a href="http://sobereva.com/multiwfn" hidefocus="true"  >Multiwfn主页</a></li></ul>
+</div>
+<div class="p_pop h_pop" id="mn_userapp_menu" style="display: none"></div><div id="mu" class="cl">
+<ul class="cl " id="snav_mn_userapp" style="display:none">
+</ul>
+</div><div class="a_mu"><a href="http://www.keinsci.com/workshop/10WFN/index.html" target="_blank" style="font-size: 25pt"><span style="color:red"><b>“第10届量子化学波函数分析与Multiwfn程序培训班将于5月4-8日于北京举办，这是一次性完整、系统学习波函数分析的各种理论知识和全面掌握强大的Multiwfn波函数分析程序使用的最不可错过的机会！报名正在进行中，请点击此链接查看，欢迎参加！</b></span></a></div><div id="scbar" class="scbar_narrow cl">
+<form id="scbar_form" method="post" autocomplete="off" onsubmit="searchFocus($('scbar_txt'))" action="search.php?searchsubmit=yes" target="_blank">
+<input type="hidden" name="mod" id="scbar_mod" value="search" />
+<input type="hidden" name="formhash" value="1e7afb36" />
+<input type="hidden" name="srchtype" value="title" />
+<input type="hidden" name="srhfid" value="" />
+<input type="hidden" name="srhlocality" value="forum::attachment" />
+<table cellspacing="0" cellpadding="0">
+<tr>
+<td class="scbar_icon_td"></td>
+<td class="scbar_txt_td"><input type="text" name="srchtxt" id="scbar_txt" value="请输入搜索内容" autocomplete="off" x-webkit-speech speech /></td>
+<td class="scbar_type_td"><a href="javascript:;" id="scbar_type" class="xg1" onclick="showMenu(this.id)" hidefocus="true">搜索</a></td>
+<td class="scbar_btn_td"><button type="submit" name="searchsubmit" id="scbar_btn" sc="1" class="pn pnc" value="true"><strong class="xi2">搜索</strong></button></td>
+<td class="scbar_hot_td">
+<div id="scbar_hot">
+<strong class="xw1">热搜 Top search: </strong>
+
+<a href="search.php?mod=forum&amp;srchtxt=%BF%C6%D2%F4&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">科音</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=%C1%BF%D7%D3%BB%AF%D1%A7&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">量子化学</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=%B2%A8%BA%AF%CA%FD%B7%D6%CE%F6&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">波函数分析</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=Multiwfn&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">Multiwfn</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=Gaussian&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">Gaussian</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=%B7%D6%D7%D3%B6%AF%C1%A6%D1%A7&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">分子动力学</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=GROMACS&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">GROMACS</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=%C5%E0%D1%B5&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">培训</a>
+
+
+
+<a href="search.php?mod=forum&amp;srchtxt=CP2K&amp;formhash=1e7afb36&amp;searchsubmit=true&amp;source=hotsearch" target="_blank" class="xi2" sc="1">CP2K</a>
+
+</div>
+</td>
+</tr>
+</table>
+</form>
+</div>
+<ul id="scbar_type_menu" class="p_pop" style="display: none;"><li><a href="javascript:;" rel="forum" class="curtype">帖子</a></li><li><a href="javascript:;" rel="user">用户</a></li></ul>
+<script type="text/javascript">
+initSearchmenu('scbar', '');
+</script>
+</div>
+</div>
+
+
+<div id="wp" class="wp">
+<div id="ct" class="wp cl w">
+<div class="nfl" id="main_succeed" style="display: none">
+<div class="f_c altw">
+<div class="alert_right">
+<p id="succeedmessage"></p>
+<p id="succeedlocation" class="alert_btnleft"></p>
+<p class="alert_btnleft"><a id="succeedmessage_href">如果您的浏览器没有自动跳转，请点击此链接</a></p>
+</div>
+</div>
+</div>
+<div class="nfl" id="main_message">
+<div class="f_c altw">
+<div id="messagetext" class="alert_info">
+<p>抱歉，您没有权限下载本附件。请注册并登录后再试</br>Sorry, you do not have permission to download this attachment. Please register and log in and try again</p></div><div></p>
+</div>
+<div id="messagelogin"></div>
+<script type="text/javascript">ajaxget('member.php?mod=logging&action=login&infloat=yes&frommessage', 'messagelogin');</script>
+</div>
+</div>
+</div>	</div>
+<div id="ft" class="wp cl">
+<div id="flk" class="y">
+<p>
+<a href="forum.php?mobile=yes" >手机版 Mobile version</a><span class="pipe">|</span><a href="http://www.keinsci.com" >北京科音自然科学研究中心 Beijing Kein Research Center for Natural Sciences</a><span class="pipe">|</span><a href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=11010502035419" >京公网安备 11010502035419号</a><span class="pipe">|</span><strong><a href="http://bbs.keinsci.com/" target="_blank">计算化学公社 — 北京科音旗下高水平计算化学交流论坛</a></strong>
+( <a href="https://beian.miit.gov.cn" target="_blank">京ICP备14038949号-1</a> )<span class="pipe">|</span><a href="sitemap.xml" target="_blank" title="网站地图">网站地图</a></p>
+<p class="xs0">
+GMT+8, 2026-4-3 22:57<span id="debuginfo">
+, Processed in 0.090502 second(s), 11 queries
+.
+</span>
+</p>
+</div></div>
+<script src="home.php?mod=misc&ac=sendmail&rand=1775228224" type="text/javascript"></script>
+<div id="scrolltop">
+<span hidefocus="true"><a title="返回顶部" onclick="window.scrollTo('0','0')" class="scrolltopa" ><b>返回顶部</b></a></span>
+</div>
+<script type="text/javascript">_attachEvent(window, 'scroll', function () { showTopLink(); });checkBlind();</script>
+			<div id="discuz_tips" style="display:none;"></div>
+			<script type="text/javascript">
+				var tipsinfo = '37625770|X3.3|0.6||0||0|7|1775228224|839bf63f1c69919a175417a3fa153ddf|2';
+			</script>
+			<script src="http://discuz.gtimg.cn/cloud/scripts/discuz_tips.js?v=1" type="text/javascript" charset="UTF-8"></script></body>
+</html>

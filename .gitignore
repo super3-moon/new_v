@@ -1,0 +1,42 @@
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# PyInstaller build outputs
+_pkg_work/
+build/
+dist/
+*.spec.bak
+
+# Release binaries are kept locally or published as GitHub Releases
+release/
+
+# Bundled third-party runtime folders
+Multiwfn_2026.3.27_bin_Win64/
+vmd19.3/
+
+# Local machine configuration
+vmd_style_tool_config.json
+
+# Generated molecular / rendering working files
+*.cub
+*.dat
+*.chk
+*.fch
+*.fchk
+*.out
+*.gjf
+*.xyz
+*.pdb
+*.bmp
+*.tga
+*.ppm
+
+# Editor and OS noise
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
