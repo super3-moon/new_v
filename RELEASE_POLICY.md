@@ -5,14 +5,16 @@
 - Source-code feature changes are handled in a separate thread.
 
 ## Fixed Output Root
-- Use one fixed release root folder:
-- `E:\test\release`
+- Use the current project folder's `release` directory: `<project>\release`.
 
 ## Folder Rule
 - Each release must be created under a dated subfolder:
-- `E:\test\release\YYYY-MM-DD`
+- `<project>\release\YYYY-MM-DD`
 - If multiple releases are generated on the same date, use:
-- `E:\test\release\YYYY-MM-DD_v2`, `..._v3`
+- `<project>\release\YYYY-MM-DD_v2`, `..._v3`
+- `build_release.ps1` selects the next available suffix automatically and never overwrites an existing dated folder.
+- After the newest same-day build passes validation, run `cleanup_project.ps1`.
+- Keep only the highest same-day suffix locally; keep one release for dates without duplicate builds.
 
 ## Naming Rule
 - Executable name stays unified:
@@ -26,6 +28,13 @@
 
 ## Safety Rule
 - Do not delete core source files during packaging.
-- Do not write release outputs outside `E:\test\release\...`.
+- Do not write release outputs outside `<project>\release\...`.
 - Do not commit release binaries to Git; publish binaries through GitHub Releases when needed.
 - Do not mix packaging changes with source-code feature changes in the same commit or branch.
+- Do not package local custom-style data or custom cover images.
+- Archive same-day intermediate releases outside the project before removing them.
+
+## GitHub Retention
+- Keep current source, tests, resources, and documentation on the default branch.
+- Publish the executable as a GitHub Release asset rather than committing it.
+- Keep only the newest GitHub Release and its matching tag.
