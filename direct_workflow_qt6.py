@@ -276,7 +276,7 @@ class DirectWorkflowPage(QWidget):
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(12, 10, 12, 10)
         footer_layout.setSpacing(8)
-        self.back_button = QPushButton("返回风格库")
+        self.back_button = QPushButton("返回绘图方案")
         self.back_button.clicked.connect(self._request_back)
         footer_layout.addWidget(self.back_button)
         self.open_dir_button = QPushButton("打开结果目录")
@@ -412,7 +412,7 @@ class DirectWorkflowPage(QWidget):
         if self.is_running():
             return
         if not self.style_data:
-            QMessageBox.warning(self, "尚未选择风格", "请返回风格库选择绘图风格。")
+            QMessageBox.warning(self, "尚未选择风格", "请返回绘图方案选择绘图风格。")
             return
         if self.source_path is None or not self.source_path.is_file():
             QMessageBox.warning(self, "尚未添加文件", "请先选择或拖入一个文件。")
@@ -780,7 +780,7 @@ class DirectWorkflowPage(QWidget):
 
     def _request_back(self) -> None:
         if self.is_running():
-            QMessageBox.information(self, "工作流运行中", "请先停止当前工作流，再返回风格库。")
+            QMessageBox.information(self, "工作流运行中", "请先停止当前工作流，再返回绘图方案。")
             return
         self.backRequested.emit()
 

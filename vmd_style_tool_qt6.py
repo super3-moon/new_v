@@ -608,7 +608,7 @@ class MainWindow(QMainWindow):
         workspace_sec, workspace_l = self._section("工作区")
         workspace_row = QHBoxLayout()
         workspace_row.setSpacing(6)
-        self.nav_style_btn = QPushButton("风格库")
+        self.nav_style_btn = QPushButton("绘图方案")
         self.nav_style_btn.setObjectName("navButton")
         self.nav_style_btn.setCheckable(True)
         self.nav_style_btn.clicked.connect(self._show_style_selection)
@@ -626,7 +626,7 @@ class MainWindow(QMainWindow):
         workspace_l.addLayout(workspace_row)
         left_col.addWidget(workspace_sec)
 
-        mode_sec, mode_l = self._section("生成模式")
+        self.style_mode_section, mode_l = self._section("方案组合方式")
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
         self.mode_bundle_btn = QPushButton("套装模式")
@@ -640,7 +640,7 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(self.mode_bundle_btn)
         mode_row.addWidget(self.mode_split_btn)
         mode_l.addLayout(mode_row)
-        left_col.addWidget(mode_sec)
+        left_col.addWidget(self.style_mode_section)
 
         path_sec, path_l = self._section("程序路径")
         path_grid = QGridLayout()
@@ -879,7 +879,7 @@ class MainWindow(QMainWindow):
         state_kicker = QLabel("IMPORT WORKFLOW")
         state_kicker.setObjectName("kickerLabel")
         state_intro_l.addWidget(state_kicker)
-        state_title = QLabel("把成熟方案\n收进你的风格库")
+        state_title = QLabel("把成熟方案\n保存为自定义风格")
         state_title.setObjectName("importTitle")
         state_intro_l.addWidget(state_title)
         state_desc = QLabel(
@@ -2321,6 +2321,7 @@ class MainWindow(QMainWindow):
         self.filter_bar.setVisible(showing_styles)
         self.count_label.setVisible(showing_styles)
         self.style_action_bar.setVisible(showing_styles)
+        self.style_mode_section.setVisible(showing_styles)
         self.generate_shortcut.setEnabled(showing_styles)
         self.direct_shortcut.setEnabled(showing_styles)
         self.nav_style_btn.setChecked(page in {"styles", "direct"})
@@ -2331,7 +2332,9 @@ class MainWindow(QMainWindow):
 
     def _show_style_selection(self) -> None:
         self._set_page_chrome(
-            "styles", "风格库", "选择视觉方案后直接绘图，也可以单独导出工作流脚本"
+            "styles",
+            "绘图方案",
+            "选择整套风格，或分别组合骨架与等值面风格",
         )
         self.stack.setCurrentIndex(self._style_stack_index())
         self._animate_stack_page()

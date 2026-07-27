@@ -15,6 +15,7 @@
 5. 每个改动线程必须维护 `THREAD_SYNC_LOG.md`；新增或删除文件必须同步 `工程结构.md`。
 6. GitHub 的代码页只保存当前稳定源码、测试、资源和文档；二进制只放在 GitHub Releases。
 7. GitHub Releases 只保留当前最新发行版。
+8. 每次工程修改完成并通过测试后都必须重新打包、验证 EXE；GitHub Release 附件只上传该 EXE。
 
 ## 开始任意工作前
 

@@ -573,3 +573,27 @@ Phase: DONE
 Files: source, docs, tests, packaging and cleanup policy
 Summary: Completed recoverable local cleanup, retained only the latest same-day releases, separated local user data from distributable defaults, validated the latest package, and prepared the stable project state for GitHub PR and Release publication.
 Result: 34 tests and application self-test passed; latest local package is 2026-07-24_v3.
+Time: 2026-07-27 22:05:48 +08:00
+Thread: codex-style-navigation-hierarchy-20260727
+Phase: START
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py
+Summary: Move bundle and split selectors under the drawing-style workspace, rename the workspace, and hide mode controls outside that workspace.
+Result: in_progress
+Time: 2026-07-27 22:07:57 +08:00
+Thread: codex-style-navigation-hierarchy-20260727
+Phase: DONE
+Files: vmd_style_tool_qt6.py; direct_workflow_qt6.py; vmd_style_tool.py; README.md; tests/test_qt_smoke.py
+Summary: Renamed the style workspace to Drawing Plans, made bundle/split controls visible only inside that workspace, and aligned related UI wording.
+Result: 34 tests, focused navigation test, syntax checks and application self-test passed.
+Time: 2026-07-27 22:11:04 +08:00
+Thread: codex-mandatory-release-policy-20260727
+Phase: START
+Files: RELEASE_POLICY.md; GIT_GITHUB_WORKFLOW.md; 工程说明_协作规范.md
+Summary: Record the requirement that every completed modification must produce and validate a new EXE.
+Result: in_progress
+Time: 2026-07-27 22:11:07 +08:00
+Thread: codex-mandatory-release-policy-20260727
+Phase: DONE
+Files: RELEASE_POLICY.md; GIT_GITHUB_WORKFLOW.md; 工程说明_协作规范.md
+Summary: Made fresh EXE packaging mandatory after every project modification and restricted GitHub Release assets to the EXE.
+Result: policy recorded; packaging follows immediately.
