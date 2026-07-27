@@ -597,3 +597,15 @@ Phase: DONE
 Files: RELEASE_POLICY.md; GIT_GITHUB_WORKFLOW.md; 工程说明_协作规范.md
 Summary: Made fresh EXE packaging mandatory after every project modification and restricted GitHub Release assets to the EXE.
 Result: policy recorded; packaging follows immediately.
+Time: 2026-07-27 22:11:31 +08:00
+Thread: packaging
+Phase: START
+Files: release\2026-07-27\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build started (2026-07-27)
+Result: in_progress
+Time: 2026-07-27 22:12:38 +08:00
+Thread: packaging
+Phase: DONE
+Files: release\2026-07-27\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build completed (2026-07-27)
+Result: success
