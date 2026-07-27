@@ -12,20 +12,24 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Summary,
 
-    [string]$Result = "成功"
+    [string]$Result = "success"
 )
 
-$logPath = "E:\test\THREAD_SYNC_LOG.md"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
+$logPath = Join-Path $PSScriptRoot "THREAD_SYNC_LOG.md"
 $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 
 $entry = @"
 
-时间: $time
-线程: $Thread
-阶段: $Phase
-文件: $Files
-摘要: $Summary
-结果: $Result
+Time: $time
+Thread: $Thread
+Phase: $Phase
+Files: $Files
+Summary: $Summary
+Result: $Result
 "@
 
 # 简单文件锁，降低并发线程同时写日志时的冲突概率
@@ -36,7 +40,7 @@ while ($true) {
         $fs = [System.IO.File]::Open($logPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         try {
             $fs.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($entry)
+            $bytes = $utf8NoBom.GetBytes($entry)
             $fs.Write($bytes, 0, $bytes.Length)
             $fs.Flush()
         }
@@ -49,10 +53,10 @@ while ($true) {
     catch {
         $retry++
         if ($retry -ge $maxRetry) {
-            throw "无法写入日志（可能被其他线程长时间占用）：$logPath"
+            throw "Unable to update the sync log because it remained locked: $logPath"
         }
         Start-Sleep -Milliseconds 150
     }
 }
 
-Write-Output "日志已写入: $logPath"
+Write-Output "Sync log updated: $logPath"

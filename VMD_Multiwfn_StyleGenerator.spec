@@ -1,11 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+root = Path(SPECPATH).resolve()
+style_dir = root / 'vmd_cube_styles'
+style_data = [
+    (str(path), 'vmd_cube_styles')
+    for path in style_dir.iterdir()
+    if path.is_file() and not path.name.startswith('custom_')
+]
+
 
 a = Analysis(
-    ['E:\\test\\vmd_style_tool_qt6.py'],
-    pathex=[],
+    [str(root / 'vmd_style_tool_qt6.py')],
+    pathex=[str(root)],
     binaries=[],
-    datas=[('E:\\test\\vmd_cube_styles', 'vmd_cube_styles'), ('E:\\test\\vmd_custom_styles.json', '.')],
+    datas=style_data + [
+        (str(root / 'vmd_custom_styles.default.json'), '.'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

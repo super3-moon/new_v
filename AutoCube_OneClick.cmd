@@ -10,7 +10,7 @@ echo [INFO] A folder: %A_DIR%
 echo.
 
 rem ===== User editable software paths (edit these two lines) =====
-set "MULTIWFN_EXE=E:\test\Multiwfn_2026.3.27_bin_Win64\Multiwfn.exe"
+set "MULTIWFN_EXE=E:\path\to\Multiwfn.exe"
 set "VMD_EXE=E:\path\to\vmd.exe"
 rem ===============================================================
 

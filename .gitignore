@@ -14,12 +14,20 @@ dist/
 # Release binaries are kept locally or published as GitHub Releases
 release/
 
+# Runtime user data and generated workflow scripts
+vmd_custom_styles.json
+vmd_cube_styles/custom_*_cover.*
+/*.cmd
+!/AutoCube_OneClick.cmd
+
 # Bundled third-party runtime folders
-Multiwfn_2026.3.27_bin_Win64/
+Multiwfn_*_bin_Win64/
 vmd19.3/
 
 # Local machine configuration
 vmd_style_tool_config.json
+multiwfn_batch_presets.json
+batch_runs/
 
 # Generated molecular / rendering working files
 *.cub
