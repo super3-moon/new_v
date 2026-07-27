@@ -2802,7 +2802,7 @@ async function importCustomStyle() {
     log('导入失败: ' + data.error);
     return;
   }
-  log('导入成功: ' + data.style_name + '，已加入风格库。');
+  log('导入成功: ' + data.style_name + '，已保存为自定义风格。');
   await loadInit();
 }
 
@@ -3181,4 +3181,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

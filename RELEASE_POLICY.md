@@ -3,6 +3,7 @@
 ## Scope
 - This thread is dedicated to release packaging only.
 - Source-code feature changes are handled in a separate thread.
+- Every completed project modification must be followed by a fresh EXE build and validation; packaging is not optional.
 
 ## Fixed Output Root
 - Use the current project folder's `release` directory: `<project>\release`.
@@ -19,6 +20,8 @@
 ## Naming Rule
 - Executable name stays unified:
 - `VMD_Multiwfn_StyleGenerator.exe`
+- The uploaded GitHub Release asset must contain only this EXE.
+- Built-in images and default JSON data are embedded in the EXE and materialized at runtime when missing.
 
 ## Sync Rule With Source Thread
 1. Source thread writes a `DONE` record to `THREAD_SYNC_LOG.md`.

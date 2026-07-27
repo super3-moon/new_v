@@ -265,16 +265,28 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             window.show()
             self.app.processEvents()
 
+            self.assertEqual(window.nav_style_btn.text(), "绘图方案")
             self.assertTrue(window.nav_style_btn.isChecked())
             self.assertTrue(window.filter_bar.isVisible())
+            self.assertTrue(window.style_mode_section.isVisible())
             self.assertFalse(window.nav_custom_btn.isChecked())
             self.assertFalse(window.nav_batch_btn.isChecked())
+
+            window._show_direct_workflow()
+            self.app.processEvents()
+            self.assertEqual(window.stack.currentIndex(), window.direct_page_index)
+            self.assertFalse(window.style_mode_section.isVisible())
+            self.assertEqual(window.direct_page.back_button.text(), "返回绘图方案")
+            window.direct_page.back_button.click()
+            self.app.processEvents()
+            self.assertTrue(window.style_mode_section.isVisible())
 
             window.nav_custom_btn.click()
             self.app.processEvents()
             self.assertEqual(window.stack.currentIndex(), window.custom_page_index)
             self.assertEqual(window.main_title.text(), "自定义风格")
             self.assertFalse(window.filter_bar.isVisible())
+            self.assertFalse(window.style_mode_section.isVisible())
             self.assertTrue(window.nav_custom_btn.isChecked())
             self.assertEqual(visible_clipped_labels(), [])
 
@@ -283,6 +295,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertEqual(window.stack.currentIndex(), window.batch_page_index)
             self.assertTrue(window.nav_batch_btn.isChecked())
             self.assertFalse(window.page_header.isVisible())
+            self.assertFalse(window.style_mode_section.isVisible())
             page = window.batch_page
             toolbar_buttons = [
                 button.text()
@@ -331,6 +344,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertEqual(window.stack.currentIndex(), window._style_stack_index())
             self.assertTrue(window.page_header.isVisible())
             self.assertTrue(window.filter_bar.isVisible())
+            self.assertTrue(window.style_mode_section.isVisible())
             self.assertTrue(window.nav_style_btn.isChecked())
             self.assertEqual(visible_clipped_labels(), [])
         finally:
