@@ -51,29 +51,36 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_default_window_size_is_compact_and_screen_aware(self) -> None:
-        self.assertEqual(preferred_window_size(1536, 816), (998, 701))
-        self.assertEqual(preferred_window_size(1920, 1040), (1100, 760))
+    def test_default_window_size_is_balanced_and_screen_aware(self) -> None:
+        self.assertEqual(preferred_window_size(1536, 816), (1320, 750))
+        self.assertEqual(preferred_window_size(1920, 1040), (1360, 840))
         self.assertEqual(preferred_window_size(1024, 640), (960, 620))
 
         window = MainWindow()
         try:
             self.assertEqual((window.minimumWidth(), window.minimumHeight()), (960, 620))
-            self.assertLessEqual(window.width(), 1100)
-            self.assertLessEqual(window.height(), 760)
+            self.assertLessEqual(window.width(), 1360)
+            self.assertLessEqual(window.height(), 840)
         finally:
             window.close()
 
-    def test_compact_layout_reflows_without_hiding_primary_actions(self) -> None:
+    def test_compact_layout_keeps_split_panes_and_sidebar_details_visible(self) -> None:
         window = MainWindow()
         try:
             window.resize(1000, 700)
             window.show()
+            window._set_mode("split")
             self.app.processEvents()
 
-            self.assertTrue(window.path_section.isHidden())
-            self.assertTrue(window.log_section.isHidden())
-            self.assertEqual(window.split_inner.orientation(), Qt.Vertical)
+            self.assertTrue(window.path_section.isVisible())
+            self.assertTrue(window.log_section.isVisible())
+            self.assertEqual(window.split_inner.orientation(), Qt.Horizontal)
+            split_sizes = window.split_inner.sizes()
+            self.assertLessEqual(abs(split_sizes[0] - split_sizes[1]), 2)
+            self.assertEqual(window.skeleton_grid.max_columns, 2)
+            self.assertEqual(window.iso_grid.max_columns, 2)
+            self.assertEqual({card.height() for card in window.skeleton_grid.cards}, {232})
+            self.assertEqual({card.height() for card in window.iso_grid.cards}, {232})
 
             window._show_custom_import()
             window._set_import_page(1)

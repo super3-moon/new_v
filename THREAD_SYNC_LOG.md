@@ -657,3 +657,15 @@ Phase: DONE
 Files: release\2026-07-28_v2\VMD_Multiwfn_StyleGenerator.exe
 Summary: release build completed (2026-07-28_v2)
 Result: success
+Time: 2026-07-28 19:46:27 +08:00
+Thread: source
+Phase: START
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
+Summary: 恢复常驻侧栏信息、重做拆分模式左右布局并调整默认窗口比例
+Result: in_progress
+Time: 2026-07-28 19:50:14 +08:00
+Thread: source
+Phase: DONE
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
+Summary: 完成平衡默认窗口、常驻程序路径与日志，以及拆分模式等宽左右双列卡片布局
+Result: 36 tests, self-test, compile checks and three-size render inspection passed
