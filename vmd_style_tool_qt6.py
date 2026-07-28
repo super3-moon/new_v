@@ -63,12 +63,17 @@ CARD_W = 256
 CARD_IMG_W = 232
 CARD_IMG_H = 144
 CARD_GAP = 12
+SPLIT_CARD_W = 204
+SPLIT_CARD_H = 232
+SPLIT_CARD_IMG_W = 180
+SPLIT_CARD_IMG_H = 112
+SPLIT_CARD_GAP = 10
 WINDOW_MIN_W = 960
 WINDOW_MIN_H = 620
-WINDOW_MAX_W = 1100
-WINDOW_MAX_H = 760
-WINDOW_WIDTH_RATIO = 0.65
-WINDOW_HEIGHT_RATIO = 0.86
+WINDOW_MAX_W = 1360
+WINDOW_MAX_H = 840
+WINDOW_WIDTH_RATIO = 0.86
+WINDOW_HEIGHT_RATIO = 0.92
 
 
 def preferred_window_size(available_width: int, available_height: int) -> tuple[int, int]:
@@ -328,14 +333,29 @@ class StyleCard(QFrame):
     clicked = Signal(str)
     _preview_cache: dict[tuple[str, int, int], QPixmap | None] = {}
 
-    def __init__(self, style: dict, subtitle: str) -> None:
+    def __init__(
+        self,
+        style: dict,
+        subtitle: str,
+        *,
+        card_width: int = CARD_W,
+        card_height: int | None = None,
+        image_width: int = CARD_IMG_W,
+        image_height: int = CARD_IMG_H,
+    ) -> None:
         super().__init__()
         self.style_id = str(style.get("id", ""))
+        self.card_width = int(card_width)
+        self.card_height = card_height
+        self.image_width = int(image_width)
+        self.image_height = int(image_height)
         self.setObjectName("styleCard")
         self.setCursor(Qt.PointingHandCursor)
         self.setProperty("selected", False)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setFixedWidth(CARD_W)
+        self.setFixedWidth(self.card_width)
+        if self.card_height is not None:
+            self.setFixedHeight(int(self.card_height))
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         lay = QVBoxLayout(self)
@@ -344,7 +364,7 @@ class StyleCard(QFrame):
 
         img = QLabel()
         img.setObjectName("cardImage")
-        img.setFixedSize(CARD_IMG_W, CARD_IMG_H)
+        img.setFixedSize(self.image_width, self.image_height)
         img.setAlignment(Qt.AlignCenter)
         self._set_pixmap(img, str(style.get("image", "")))
         lay.addWidget(img, alignment=Qt.AlignHCenter)
@@ -368,6 +388,8 @@ class StyleCard(QFrame):
         s.setWordWrap(True)
         s.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         lay.addWidget(s)
+        if self.card_height is not None:
+            lay.addStretch(1)
         self.setToolTip(f"{name}\n{subtitle}".strip())
 
     def _set_pixmap(self, label: QLabel, image_name: str) -> None:
@@ -385,10 +407,10 @@ class StyleCard(QFrame):
             self._preview_cache[cache_key] = None if loaded.isNull() else loaded
         pix = self._preview_cache[cache_key]
         if pix is None:
-            blank = QPixmap(CARD_IMG_W, CARD_IMG_H)
+            blank = QPixmap(self.image_width, self.image_height)
             blank.fill(Qt.transparent)
             painter = QPainter(blank)
-            gradient = QLinearGradient(0, 0, CARD_IMG_W, CARD_IMG_H)
+            gradient = QLinearGradient(0, 0, self.image_width, self.image_height)
             gradient.setColorAt(0.0, QColor("#dbeafe"))
             gradient.setColorAt(1.0, QColor("#e9d5ff"))
             painter.fillRect(blank.rect(), gradient)
@@ -401,19 +423,19 @@ class StyleCard(QFrame):
             painter.end()
             label.setPixmap(blank)
             return
-        canvas = QPixmap(CARD_IMG_W, CARD_IMG_H)
+        canvas = QPixmap(self.image_width, self.image_height)
         canvas.fill(QColor("#f7f9fc"))
         scaled = pix.scaled(
-            CARD_IMG_W - 8,
-            CARD_IMG_H - 8,
+            self.image_width - 8,
+            self.image_height - 8,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
         painter = QPainter(canvas)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.drawPixmap(
-            (CARD_IMG_W - scaled.width()) // 2,
-            (CARD_IMG_H - scaled.height()) // 2,
+            (self.image_width - scaled.width()) // 2,
+            (self.image_height - scaled.height()) // 2,
             scaled,
         )
         painter.end()
@@ -434,8 +456,24 @@ class StyleCard(QFrame):
 class CardGrid(QScrollArea):
     stylePicked = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        card_width: int = CARD_W,
+        card_height: int | None = None,
+        image_width: int = CARD_IMG_W,
+        image_height: int = CARD_IMG_H,
+        gap: int = CARD_GAP,
+        max_columns: int | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.card_width = int(card_width)
+        self.card_height = card_height
+        self.image_width = int(image_width)
+        self.image_height = int(image_height)
+        self.gap = int(gap)
+        self.max_columns = max_columns
         self.setObjectName("cardGrid")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -445,8 +483,8 @@ class CardGrid(QScrollArea):
         self._body = QWidget()
         self._grid = QGridLayout(self._body)
         self._grid.setContentsMargins(4, 4, 4, 4)
-        self._grid.setHorizontalSpacing(CARD_GAP)
-        self._grid.setVerticalSpacing(CARD_GAP)
+        self._grid.setHorizontalSpacing(self.gap)
+        self._grid.setVerticalSpacing(self.gap)
         self.setWidget(self._body)
 
         self.cards: list[StyleCard] = []
@@ -472,7 +510,14 @@ class CardGrid(QScrollArea):
             if not sid:
                 continue
             sub = subtitle_fn(st) if callable(subtitle_fn) else str(st.get("notes", ""))
-            card = StyleCard(st, sub)
+            card = StyleCard(
+                st,
+                sub,
+                card_width=self.card_width,
+                card_height=self.card_height,
+                image_width=self.image_width,
+                image_height=self.image_height,
+            )
             card.clicked.connect(self._on_pick)
             self.cards.append(card)
 
@@ -492,7 +537,10 @@ class CardGrid(QScrollArea):
 
     def _cols(self) -> int:
         w = max(260, self.viewport().width() - 8)
-        return max(1, w // (CARD_W + CARD_GAP))
+        columns = max(1, w // (self.card_width + self.gap))
+        if self.max_columns is not None:
+            columns = min(columns, self.max_columns)
+        return columns
 
     def _relayout(self) -> None:
         self._clear(delete_widgets=False)
@@ -527,7 +575,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
         screen = QApplication.primaryScreen()
         if screen is None:
-            initial_width, initial_height = 1180, 700
+            initial_width, initial_height = 1280, 760
         else:
             available = screen.availableGeometry()
             initial_width, initial_height = preferred_window_size(
@@ -565,17 +613,6 @@ class MainWindow(QMainWindow):
         label.setObjectName("sectionCaption")
         lay.addWidget(label)
         return frame, lay
-
-    def _set_sidebar_details_visible(self, visible: bool) -> None:
-        visible = bool(visible)
-        self.path_section.setVisible(visible)
-        self.log_section.setVisible(visible)
-        self.sidebar_details_btn.blockSignals(True)
-        self.sidebar_details_btn.setChecked(visible)
-        self.sidebar_details_btn.setText(
-            "收起程序路径与运行记录" if visible else "程序路径与运行记录"
-        )
-        self.sidebar_details_btn.blockSignals(False)
 
     @staticmethod
     def _apply_shadow(
@@ -699,12 +736,6 @@ class MainWindow(QMainWindow):
         mode_l.addLayout(mode_row)
         left_col.addWidget(self.style_mode_section)
 
-        self.sidebar_details_btn = QPushButton("程序路径与运行记录")
-        self.sidebar_details_btn.setObjectName("sidebarDetailsButton")
-        self.sidebar_details_btn.setCheckable(True)
-        self.sidebar_details_btn.toggled.connect(self._set_sidebar_details_visible)
-        left_col.addWidget(self.sidebar_details_btn)
-
         self.path_section, path_l = self._section("程序路径")
         path_grid = QGridLayout()
         path_grid.setHorizontalSpacing(6)
@@ -743,12 +774,11 @@ class MainWindow(QMainWindow):
         self.log_view.setObjectName("logView")
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1000)
-        self.log_view.setFixedHeight(86)
+        self.log_view.setFixedHeight(96)
         self.log_view.setPlaceholderText("运行状态与提示会显示在这里")
         log_l.addWidget(self.log_view)
         self.log_section.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         left_col.addWidget(self.log_section)
-        self._set_sidebar_details_visible(False)
         left_col.addStretch(1)
 
         self.page_header = QFrame()
@@ -820,36 +850,54 @@ class MainWindow(QMainWindow):
 
         split_inner = QSplitter(Qt.Horizontal)
         split_inner.setChildrenCollapsible(False)
-        split_inner.setHandleWidth(8)
+        split_inner.setHandleWidth(6)
         self.split_inner = split_inner
 
         sk_wrap = QFrame()
         sk_wrap.setObjectName("stylePane")
+        sk_wrap.setMinimumWidth(260)
         sk_l = QVBoxLayout(sk_wrap)
         sk_l.setContentsMargins(10, 10, 10, 10)
         sk_l.setSpacing(8)
         sk_title = QLabel("骨架样式")
         sk_title.setObjectName("paneTitle")
         sk_l.addWidget(sk_title)
-        self.skeleton_grid = CardGrid()
+        self.skeleton_grid = CardGrid(
+            card_width=SPLIT_CARD_W,
+            card_height=SPLIT_CARD_H,
+            image_width=SPLIT_CARD_IMG_W,
+            image_height=SPLIT_CARD_IMG_H,
+            gap=SPLIT_CARD_GAP,
+            max_columns=2,
+        )
         self.skeleton_grid.stylePicked.connect(self._on_skeleton_picked)
         sk_l.addWidget(self.skeleton_grid, 1)
         split_inner.addWidget(sk_wrap)
 
         iso_wrap = QFrame()
         iso_wrap.setObjectName("stylePane")
+        iso_wrap.setMinimumWidth(260)
         iso_l = QVBoxLayout(iso_wrap)
         iso_l.setContentsMargins(10, 10, 10, 10)
         iso_l.setSpacing(8)
         iso_title = QLabel("等值面样式")
         iso_title.setObjectName("paneTitle")
         iso_l.addWidget(iso_title)
-        self.iso_grid = CardGrid()
+        self.iso_grid = CardGrid(
+            card_width=SPLIT_CARD_W,
+            card_height=SPLIT_CARD_H,
+            image_width=SPLIT_CARD_IMG_W,
+            image_height=SPLIT_CARD_IMG_H,
+            gap=SPLIT_CARD_GAP,
+            max_columns=2,
+        )
         self.iso_grid.stylePicked.connect(self._on_iso_picked)
         iso_l.addWidget(self.iso_grid, 1)
         split_inner.addWidget(iso_wrap)
 
-        split_inner.setSizes([530, 530])
+        split_inner.setStretchFactor(0, 1)
+        split_inner.setStretchFactor(1, 1)
+        split_inner.setSizes([520, 520])
         split_l.addWidget(split_inner, 1)
         self.stack.addWidget(split_page)
 
@@ -902,20 +950,6 @@ class MainWindow(QMainWindow):
         self.theme_btn.setToolTip("切换深浅主题（Ctrl+T）")
 
         self._apply_styles()
-        self._update_responsive_layout()
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._update_responsive_layout()
-
-    def _update_responsive_layout(self) -> None:
-        if not hasattr(self, "split_inner") or not hasattr(self, "right_panel"):
-            return
-        compact = self.right_panel.width() < 760
-        orientation = Qt.Vertical if compact else Qt.Horizontal
-        if self.split_inner.orientation() != orientation:
-            self.split_inner.setOrientation(orientation)
-            self.split_inner.setSizes([270, 270] if compact else [530, 530])
 
     def _build_custom_import_page(self) -> QWidget:
         page = QWidget()
@@ -1593,19 +1627,6 @@ class MainWindow(QMainWindow):
                 border: 1px solid #2e6dc7;
                 background: #316fca;
                 color: #ffffff;
-            }
-            QPushButton#sidebarDetailsButton {
-                min-height: 28px;
-                background: transparent;
-                border: 1px solid #e0e6ec;
-                color: #526478;
-                text-align: left;
-                padding-left: 10px;
-            }
-            QPushButton#sidebarDetailsButton:hover,
-            QPushButton#sidebarDetailsButton:checked {
-                background: #f3f7fb;
-                border-color: #cbd7e3;
             }
             QPushButton#generateBtn {
                 border: 1px solid #1f6feb;
