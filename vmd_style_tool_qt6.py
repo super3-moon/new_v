@@ -64,20 +64,21 @@ CARD_IMG_W = 232
 CARD_IMG_H = 144
 CARD_GAP = 12
 WINDOW_MIN_W = 960
-WINDOW_MIN_H = 600
-WINDOW_MAX_W = 1280
-WINDOW_MAX_H = 780
-WINDOW_SCREEN_RATIO = 0.80
+WINDOW_MIN_H = 620
+WINDOW_MAX_W = 1100
+WINDOW_MAX_H = 760
+WINDOW_WIDTH_RATIO = 0.65
+WINDOW_HEIGHT_RATIO = 0.86
 
 
 def preferred_window_size(available_width: int, available_height: int) -> tuple[int, int]:
     width = max(
         WINDOW_MIN_W,
-        min(WINDOW_MAX_W, int(max(0, available_width) * WINDOW_SCREEN_RATIO)),
+        min(WINDOW_MAX_W, int(max(0, available_width) * WINDOW_WIDTH_RATIO)),
     )
     height = max(
         WINDOW_MIN_H,
-        min(WINDOW_MAX_H, int(max(0, available_height) * WINDOW_SCREEN_RATIO)),
+        min(WINDOW_MAX_H, int(max(0, available_height) * WINDOW_HEIGHT_RATIO)),
     )
     return width, height
 
@@ -206,7 +207,7 @@ class CropImageLabel(QLabel):
         self._source_pixmap = QPixmap()
         self._selection = QRect()
         self._drag_start: QPoint | None = None
-        self.setMinimumHeight(220)
+        self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMouseTracking(True)
 
@@ -215,6 +216,7 @@ class CropImageLabel(QLabel):
         if pixmap.isNull():
             raise ValueError("无法读取该图片。")
         self._source_pixmap = pixmap
+        self.setMinimumHeight(240)
         self._selection = QRect()
         self._drag_start = None
         self.update()
@@ -252,6 +254,12 @@ class CropImageLabel(QLabel):
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.fillRect(self.rect(), QColor("#eef3f8"))
         if self._source_pixmap.isNull():
+            painter.setPen(QColor("#718399"))
+            painter.drawText(
+                self.rect().adjusted(20, 20, -20, -20),
+                Qt.AlignCenter | Qt.TextWordWrap,
+                "选择图片后，可在这里拖动框选需要识别的区域",
+            )
             painter.end()
             return
 
@@ -393,12 +401,23 @@ class StyleCard(QFrame):
             painter.end()
             label.setPixmap(blank)
             return
+        canvas = QPixmap(CARD_IMG_W, CARD_IMG_H)
+        canvas.fill(QColor("#f7f9fc"))
         scaled = pix.scaled(
-            CARD_IMG_W, CARD_IMG_H, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            CARD_IMG_W - 8,
+            CARD_IMG_H - 8,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
         )
-        x = max(0, (scaled.width() - CARD_IMG_W) // 2)
-        y = max(0, (scaled.height() - CARD_IMG_H) // 2)
-        label.setPixmap(scaled.copy(x, y, CARD_IMG_W, CARD_IMG_H))
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.drawPixmap(
+            (CARD_IMG_W - scaled.width()) // 2,
+            (CARD_IMG_H - scaled.height()) // 2,
+            scaled,
+        )
+        painter.end()
+        label.setPixmap(canvas)
 
     def set_selected(self, selected: bool) -> None:
         self.setProperty("selected", bool(selected))
@@ -547,6 +566,17 @@ class MainWindow(QMainWindow):
         lay.addWidget(label)
         return frame, lay
 
+    def _set_sidebar_details_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        self.path_section.setVisible(visible)
+        self.log_section.setVisible(visible)
+        self.sidebar_details_btn.blockSignals(True)
+        self.sidebar_details_btn.setChecked(visible)
+        self.sidebar_details_btn.setText(
+            "收起程序路径与运行记录" if visible else "程序路径与运行记录"
+        )
+        self.sidebar_details_btn.blockSignals(False)
+
     @staticmethod
     def _apply_shadow(
         widget: QWidget, *, blur: int = 24, offset_y: int = 4, alpha: int = 26
@@ -568,12 +598,13 @@ class MainWindow(QMainWindow):
         main_split = QSplitter(Qt.Horizontal)
         main_split.setChildrenCollapsible(False)
         main_split.setHandleWidth(8)
+        self.main_split = main_split
         outer.addWidget(main_split, 1)
 
         left_panel = QFrame()
         left_panel.setObjectName("leftPanel")
-        left_panel.setMinimumWidth(360)
-        left_panel.setMaximumWidth(430)
+        left_panel.setMinimumWidth(300)
+        left_panel.setMaximumWidth(340)
         left_panel_layout = QVBoxLayout(left_panel)
         left_panel_layout.setContentsMargins(10, 10, 10, 10)
         left_panel_layout.setSpacing(0)
@@ -596,13 +627,14 @@ class MainWindow(QMainWindow):
 
         right_panel = QFrame()
         right_panel.setObjectName("rightPanel")
+        self.right_panel = right_panel
         right_col = QVBoxLayout(right_panel)
         right_col.setContentsMargins(12, 12, 12, 12)
         right_col.setSpacing(10)
         self._apply_shadow(right_panel, blur=28, offset_y=5, alpha=24)
         main_split.addWidget(right_panel)
         main_split.setStretchFactor(1, 1)
-        main_split.setSizes([395, 1060])
+        main_split.setSizes([320, 780])
 
         brand = QFrame()
         brand.setObjectName("brandCard")
@@ -667,12 +699,18 @@ class MainWindow(QMainWindow):
         mode_l.addLayout(mode_row)
         left_col.addWidget(self.style_mode_section)
 
-        path_sec, path_l = self._section("程序路径")
+        self.sidebar_details_btn = QPushButton("程序路径与运行记录")
+        self.sidebar_details_btn.setObjectName("sidebarDetailsButton")
+        self.sidebar_details_btn.setCheckable(True)
+        self.sidebar_details_btn.toggled.connect(self._set_sidebar_details_visible)
+        left_col.addWidget(self.sidebar_details_btn)
+
+        self.path_section, path_l = self._section("程序路径")
         path_grid = QGridLayout()
         path_grid.setHorizontalSpacing(6)
         path_grid.setVerticalSpacing(6)
 
-        path_grid.addWidget(QLabel("Multiwfn.exe"), 0, 0)
+        path_grid.addWidget(QLabel("Multiwfn"), 0, 0)
         self.multi_edit = QLineEdit()
         self.multi_edit.setPlaceholderText(r"E:\...\Multiwfn.exe")
         path_grid.addWidget(self.multi_edit, 0, 1)
@@ -680,7 +718,7 @@ class MainWindow(QMainWindow):
         btn_multi.clicked.connect(self._pick_multi)
         path_grid.addWidget(btn_multi, 0, 2)
 
-        path_grid.addWidget(QLabel("vmd.exe"), 1, 0)
+        path_grid.addWidget(QLabel("VMD"), 1, 0)
         self.vmd_edit = QLineEdit()
         self.vmd_edit.setPlaceholderText(r"E:\...\vmd.exe")
         path_grid.addWidget(self.vmd_edit, 1, 1)
@@ -691,7 +729,7 @@ class MainWindow(QMainWindow):
         btn_scan_paths = QPushButton("自动扫描程序路径")
         btn_scan_paths.clicked.connect(self._scan_paths)
         path_l.addWidget(btn_scan_paths)
-        left_col.addWidget(path_sec)
+        left_col.addWidget(self.path_section)
 
         # Script export uses a native save dialog.  Keep only its remembered
         # name and directory instead of constructing a permanently hidden form.
@@ -700,16 +738,17 @@ class MainWindow(QMainWindow):
         self.out_dir_edit = QLineEdit(left_body)
         self.out_dir_edit.hide()
 
-        log_sec, log_l = self._section("活动记录")
+        self.log_section, log_l = self._section("活动记录")
         self.log_view = QPlainTextEdit()
         self.log_view.setObjectName("logView")
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1000)
-        self.log_view.setFixedHeight(96)
+        self.log_view.setFixedHeight(86)
         self.log_view.setPlaceholderText("运行状态与提示会显示在这里")
         log_l.addWidget(self.log_view)
-        log_sec.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        left_col.addWidget(log_sec)
+        self.log_section.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        left_col.addWidget(self.log_section)
+        self._set_sidebar_details_visible(False)
         left_col.addStretch(1)
 
         self.page_header = QFrame()
@@ -782,6 +821,7 @@ class MainWindow(QMainWindow):
         split_inner = QSplitter(Qt.Horizontal)
         split_inner.setChildrenCollapsible(False)
         split_inner.setHandleWidth(8)
+        self.split_inner = split_inner
 
         sk_wrap = QFrame()
         sk_wrap.setObjectName("stylePane")
@@ -862,6 +902,20 @@ class MainWindow(QMainWindow):
         self.theme_btn.setToolTip("切换深浅主题（Ctrl+T）")
 
         self._apply_styles()
+        self._update_responsive_layout()
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self) -> None:
+        if not hasattr(self, "split_inner") or not hasattr(self, "right_panel"):
+            return
+        compact = self.right_panel.width() < 760
+        orientation = Qt.Vertical if compact else Qt.Horizontal
+        if self.split_inner.orientation() != orientation:
+            self.split_inner.setOrientation(orientation)
+            self.split_inner.setSizes([270, 270] if compact else [530, 530])
 
     def _build_custom_import_page(self) -> QWidget:
         page = QWidget()
@@ -871,7 +925,7 @@ class MainWindow(QMainWindow):
 
         switch_row = QHBoxLayout()
         switch_row.setSpacing(8)
-        self.import_state_btn = QPushButton("VMD Save State")
+        self.import_state_btn = QPushButton("VMD 状态文件")
         self.import_state_btn.setObjectName("modeButton")
         self.import_state_btn.setCheckable(True)
         self.import_ai_btn = QPushButton("AI 图片识别")
@@ -891,20 +945,15 @@ class MainWindow(QMainWindow):
         state_l = QVBoxLayout(state_page)
         state_l.setContentsMargins(0, 0, 0, 0)
         state_l.setSpacing(10)
-        state_content = QHBoxLayout()
-        state_content.setSpacing(12)
-
         state_intro = QFrame()
         state_intro.setObjectName("importIntro")
-        state_intro.setMinimumWidth(245)
-        state_intro.setMaximumWidth(310)
         state_intro_l = QVBoxLayout(state_intro)
-        state_intro_l.setContentsMargins(22, 22, 22, 22)
-        state_intro_l.setSpacing(10)
-        state_kicker = QLabel("IMPORT WORKFLOW")
+        state_intro_l.setContentsMargins(18, 15, 18, 15)
+        state_intro_l.setSpacing(5)
+        state_kicker = QLabel("导入已有方案")
         state_kicker.setObjectName("kickerLabel")
         state_intro_l.addWidget(state_kicker)
-        state_title = QLabel("把成熟方案\n保存为自定义风格")
+        state_title = QLabel("把成熟方案保存为自定义风格")
         state_title.setObjectName("importTitle")
         state_intro_l.addWidget(state_title)
         state_desc = QLabel(
@@ -913,8 +962,7 @@ class MainWindow(QMainWindow):
         state_desc.setObjectName("mutedLabel")
         state_desc.setWordWrap(True)
         state_intro_l.addWidget(state_desc)
-        state_intro_l.addStretch(1)
-        state_content.addWidget(state_intro)
+        state_l.addWidget(state_intro)
 
         state_wrap = QFrame()
         state_wrap.setObjectName("stylePane")
@@ -941,7 +989,7 @@ class MainWindow(QMainWindow):
         self.custom_desc_edit.setPlaceholderText("简要说明适用场景和视觉特点")
         state_grid.addWidget(self.custom_desc_edit, 3, 1, 1, 2)
 
-        state_grid.addWidget(QLabel("State 文件"), 4, 0)
+        state_grid.addWidget(QLabel("状态文件"), 4, 0)
         self.state_file_edit = QLineEdit()
         self.state_file_edit.setPlaceholderText("选择 .vmd / Save State 文件")
         state_grid.addWidget(self.state_file_edit, 4, 1)
@@ -962,8 +1010,7 @@ class MainWindow(QMainWindow):
         btn_import.clicked.connect(self._import_custom_style)
         state_grid.addWidget(btn_import, 6, 1, 1, 2)
         state_grid.setColumnStretch(1, 1)
-        state_content.addWidget(state_wrap, 1)
-        state_l.addLayout(state_content)
+        state_l.addWidget(state_wrap)
         state_l.addStretch(1)
         self.import_stack.addWidget(state_page)
 
@@ -991,43 +1038,61 @@ class MainWindow(QMainWindow):
 
         ai_wrap = QFrame()
         ai_wrap.setObjectName("stylePane")
-        ai_grid = QGridLayout(ai_wrap)
-        ai_grid.setContentsMargins(12, 12, 12, 12)
-        ai_grid.setHorizontalSpacing(10)
-        ai_grid.setVerticalSpacing(10)
+        ai_form = QVBoxLayout(ai_wrap)
+        ai_form.setContentsMargins(12, 12, 12, 12)
+        ai_form.setSpacing(9)
 
-        ai_grid.addWidget(form_label("提供商"), 0, 0)
+        provider_row = QHBoxLayout()
+        provider_row.setSpacing(8)
+        provider_label = form_label("提供商")
+        provider_label.setMinimumWidth(52)
+        provider_row.addWidget(provider_label)
         self.ai_provider_combo = QComboBox()
         self.ai_provider_combo.addItem("OpenAI", "openai")
         self.ai_provider_combo.addItem("Gemini", "gemini")
         self.ai_provider_combo.currentIndexChanged.connect(self._on_ai_provider_changed)
-        ai_grid.addWidget(self.ai_provider_combo, 0, 1)
+        self.ai_provider_combo.setMinimumWidth(110)
+        provider_row.addWidget(self.ai_provider_combo)
 
-        ai_grid.addWidget(form_label("模型"), 0, 2)
+        model_label = form_label("模型")
+        model_label.setMinimumWidth(40)
+        provider_row.addWidget(model_label)
         self.ai_model_edit = QLineEdit()
-        ai_grid.addWidget(self.ai_model_edit, 0, 3)
+        provider_row.addWidget(self.ai_model_edit, 1)
+        ai_form.addLayout(provider_row)
 
-        ai_grid.addWidget(form_label("API Key"), 0, 4)
+        key_row = QHBoxLayout()
+        key_row.setSpacing(8)
+        key_label = form_label("API Key")
+        key_label.setMinimumWidth(52)
+        key_row.addWidget(key_label)
         self.ai_key_edit = QLineEdit()
         self.ai_key_edit.setEchoMode(QLineEdit.Password)
         self.ai_key_edit.setPlaceholderText("OPENAI_API_KEY")
-        ai_grid.addWidget(self.ai_key_edit, 0, 5)
+        key_row.addWidget(self.ai_key_edit, 1)
+        self.ai_key_toggle = QPushButton("显示")
+        self.ai_key_toggle.setCheckable(True)
+        self.ai_key_toggle.setFixedWidth(58)
+        self.ai_key_toggle.toggled.connect(self._toggle_ai_key_visibility)
+        key_row.addWidget(self.ai_key_toggle)
+        ai_form.addLayout(key_row)
 
-        ai_grid.addWidget(form_label("图片"), 1, 0)
+        image_row = QHBoxLayout()
+        image_row.setSpacing(8)
+        image_label = form_label("图片")
+        image_label.setMinimumWidth(52)
+        image_row.addWidget(image_label)
         self.ai_image_edit = QLineEdit()
-        ai_grid.addWidget(self.ai_image_edit, 1, 1, 1, 3)
+        self.ai_image_edit.setPlaceholderText("选择需要识别的参考图片")
+        image_row.addWidget(self.ai_image_edit, 1)
         btn_ai_image = QPushButton("选择")
         btn_ai_image.clicked.connect(self._pick_ai_image)
-        ai_grid.addWidget(btn_ai_image, 1, 4)
+        image_row.addWidget(btn_ai_image)
         self.btn_ai_recognize = QPushButton("识别风格")
         self.btn_ai_recognize.setObjectName("primaryBtn")
         self.btn_ai_recognize.clicked.connect(self._recognize_ai_style)
-        ai_grid.addWidget(self.btn_ai_recognize, 1, 5)
-        ai_grid.setColumnMinimumWidth(1, 120)
-        ai_grid.setColumnMinimumWidth(3, 220)
-        ai_grid.setColumnMinimumWidth(5, 240)
-        ai_grid.setColumnStretch(3, 2)
-        ai_grid.setColumnStretch(5, 2)
+        image_row.addWidget(self.btn_ai_recognize)
+        ai_form.addLayout(image_row)
         ai_l.addWidget(ai_wrap)
 
         preview_wrap = QFrame()
@@ -1326,8 +1391,8 @@ class MainWindow(QMainWindow):
                 background: #eff5ff;
                 color: #2359a5;
                 border: 1px solid #d8e5f7;
-                border-radius: 10px;
-                padding: 5px 10px;
+                border-radius: 9px;
+                padding: 4px 8px;
                 font-weight: 600;
             }
 
@@ -1397,6 +1462,12 @@ class MainWindow(QMainWindow):
             QLineEdit:focus, QPlainTextEdit:focus, QTableWidget:focus, QSpinBox:focus {
                 border: 1px solid #6b9fe8;
                 background: #fcfeff;
+            }
+            QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled {
+                border-color: #e1e6eb;
+                background: #f3f5f7;
+                color: #758497;
             }
             QTableWidget {
                 gridline-color: #e1e8f0;
@@ -1523,13 +1594,26 @@ class MainWindow(QMainWindow):
                 background: #316fca;
                 color: #ffffff;
             }
+            QPushButton#sidebarDetailsButton {
+                min-height: 28px;
+                background: transparent;
+                border: 1px solid #e0e6ec;
+                color: #526478;
+                text-align: left;
+                padding-left: 10px;
+            }
+            QPushButton#sidebarDetailsButton:hover,
+            QPushButton#sidebarDetailsButton:checked {
+                background: #f3f7fb;
+                border-color: #cbd7e3;
+            }
             QPushButton#generateBtn {
-                border: 1px solid #11956b;
-                background: #14a579;
+                border: 1px solid #1f6feb;
+                background: #1f6feb;
                 color: #ffffff;
                 font-weight: 700;
             }
-            QPushButton#generateBtn:hover { background: #10966d; }
+            QPushButton#generateBtn:hover { background: #195fc8; }
             QPushButton#dangerBtn {
                 border: 1px solid #f0b8b1;
                 background: #fff5f4;
@@ -1606,7 +1690,7 @@ class MainWindow(QMainWindow):
                 background: transparent;
             }
             QScrollBar:vertical {
-                width: 10px;
+                width: 8px;
                 margin: 3px 2px;
                 border: none;
                 background: transparent;
@@ -1614,9 +1698,9 @@ class MainWindow(QMainWindow):
             QScrollBar::handle:vertical {
                 min-height: 34px;
                 border-radius: 4px;
-                background: #c5ced8;
+                background: #d3dbe4;
             }
-            QScrollBar::handle:vertical:hover { background: #9eacbc; }
+            QScrollBar::handle:vertical:hover { background: #aab8c6; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
                 background: transparent;
@@ -1894,13 +1978,13 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
             }
             QFrame#styleCard[selected="true"] {
-                border: 2px solid #3977d5;
-                background: #f7faff;
+                border: 1px solid #3977d5;
+                background: #f4f8ff;
             }
             QLabel#cardImage {
                 border: none;
                 border-radius: 10px;
-                background: #edf1f5;
+                background: #f7f9fc;
             }
             QLabel#cardTitle { font-size: 14px; font-weight: 800; color: #24364a; }
             QLabel#cardSubtitle { font-size: 11px; color: #6d7c8e; }
@@ -1986,6 +2070,18 @@ class MainWindow(QMainWindow):
                 background: #f7fafd;
                 border: 1px solid #e1e8ef;
                 border-radius: 10px;
+            }
+            QLabel#parameterSummaryLabel {
+                min-width: 76px;
+                padding: 10px 8px 10px 0;
+                color: #51677c;
+                font-weight: 700;
+                border-bottom: 1px solid #edf1f5;
+            }
+            QLabel#parameterSummaryValue {
+                padding: 10px 0;
+                color: #213b52;
+                border-bottom: 1px solid #edf1f5;
             }
             QLabel#dialogTitle {
                 color: #173854;
@@ -2174,6 +2270,14 @@ class MainWindow(QMainWindow):
                 background: #111c2a;
                 border-color: #30465f;
             }
+            QLabel#parameterSummaryLabel {
+                color: #9fb4c9;
+                border-bottom-color: #2a3b4f;
+            }
+            QLabel#parameterSummaryValue {
+                color: #dfebf7;
+                border-bottom-color: #2a3b4f;
+            }
             QLabel#dialogTitle { color: #eef6ff; }
             QFrame#directDropZone {
                 background: #111c2a;
@@ -2209,6 +2313,12 @@ class MainWindow(QMainWindow):
             QProgressBar { background: #0e1825; color: #e4edf8; border-color: #3a506b; }
             QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus {
                 border-color: #62a0ea;
+            }
+            QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled {
+                background: #172231;
+                color: #7890a8;
+                border-color: #2e4157;
             }
             QPushButton {
                 background: #223249;
@@ -2405,6 +2515,10 @@ class MainWindow(QMainWindow):
         data = self.ai_provider_combo.currentData()
         return str(data or "openai")
 
+    def _toggle_ai_key_visibility(self, visible: bool) -> None:
+        self.ai_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+        self.ai_key_toggle.setText("隐藏" if visible else "显示")
+
     def _on_ai_provider_changed(self) -> None:
         provider = self._current_ai_provider()
         current_model = self.ai_model_edit.text().strip()
@@ -2586,7 +2700,7 @@ class MainWindow(QMainWindow):
         if self.mode == "split":
             sk = self._skeleton_name_by_id(self.selected_skeleton_id, "Skeleton")
             iso = self._style_name_by_id(self.selected_iso_id, "Iso")
-            self.action_selection_label.setText(f"当前选择：{sk} + {iso}")
+            self.action_selection_label.setText(f"骨架：{sk}\n等值面：{iso}")
         else:
             bundle = self._style_name_by_id(self.selected_bundle_id, "Style")
             self.action_selection_label.setText(f"当前选择：{bundle}")

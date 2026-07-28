@@ -52,15 +52,42 @@ class QtInterfaceSmokeTests(unittest.TestCase):
         )
 
     def test_default_window_size_is_compact_and_screen_aware(self) -> None:
-        self.assertEqual(preferred_window_size(1536, 816), (1228, 652))
-        self.assertEqual(preferred_window_size(1920, 1040), (1280, 780))
-        self.assertEqual(preferred_window_size(1024, 640), (960, 600))
+        self.assertEqual(preferred_window_size(1536, 816), (998, 701))
+        self.assertEqual(preferred_window_size(1920, 1040), (1100, 760))
+        self.assertEqual(preferred_window_size(1024, 640), (960, 620))
 
         window = MainWindow()
         try:
-            self.assertEqual((window.minimumWidth(), window.minimumHeight()), (960, 600))
-            self.assertLessEqual(window.width(), 1280)
-            self.assertLessEqual(window.height(), 780)
+            self.assertEqual((window.minimumWidth(), window.minimumHeight()), (960, 620))
+            self.assertLessEqual(window.width(), 1100)
+            self.assertLessEqual(window.height(), 760)
+        finally:
+            window.close()
+
+    def test_compact_layout_reflows_without_hiding_primary_actions(self) -> None:
+        window = MainWindow()
+        try:
+            window.resize(1000, 700)
+            window.show()
+            self.app.processEvents()
+
+            self.assertTrue(window.path_section.isHidden())
+            self.assertTrue(window.log_section.isHidden())
+            self.assertEqual(window.split_inner.orientation(), Qt.Vertical)
+
+            window._show_custom_import()
+            window._set_import_page(1)
+            self.app.processEvents()
+            self.assertTrue(window.btn_ai_recognize.isVisible())
+            self.assertGreaterEqual(
+                window.btn_ai_recognize.width(),
+                window.btn_ai_recognize.sizeHint().width() - 2,
+            )
+
+            window._show_batch_page()
+            self.app.processEvents()
+            self.assertEqual(window.batch_page.task_splitter.orientation(), Qt.Vertical)
+            self.assertEqual(window.batch_page.result_splitter.orientation(), Qt.Vertical)
         finally:
             window.close()
 
@@ -576,10 +603,14 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertFalse(dialog.material_rows["specular"][0].isChecked())
             self.assertTrue(dialog.material_rows["opacity"][0].isChecked())
             self.assertTrue(dialog.edit_button.isVisible())
+            self.assertTrue(dialog.summary_card.isVisible())
+            self.assertFalse(dialog.material_combo.isVisible())
             self.assertFalse(dialog.save_card.isVisible())
 
             dialog.edit_button.click()
             self.app.processEvents()
+            self.assertFalse(dialog.summary_card.isVisible())
+            self.assertTrue(dialog.material_combo.isVisible())
             self.assertTrue(dialog.save_card.isVisible())
             dialog.name_edit.setText("手动参数测试")
             dialog._save()

@@ -267,6 +267,7 @@ class DirectWorkflowPage(QWidget):
         self.session_log.setMaximumBlockCount(500)
         self.session_log.setFixedHeight(110)
         self.session_log.setPlaceholderText("运行进度会显示在这里")
+        self.session_log.hide()
         status_layout.addWidget(self.session_log)
         body_layout.addWidget(status_card)
         body_layout.addStretch(1)
@@ -325,7 +326,6 @@ class DirectWorkflowPage(QWidget):
         self.style_meta_label.setText(
             f"{selection_text} · 材质 {material} · 正等值面 {pos} · 负等值面 {neg}"
         )
-        self._append_log(f"已选择绘图风格：{self.style_name_label.text()}")
 
     def set_source_file(self, raw_path: str) -> None:
         if self.is_running():
@@ -777,6 +777,7 @@ class DirectWorkflowPage(QWidget):
         self.start_button.setText("开始直接绘图")
         self._set_status("请选择或拖入一个文件。")
         self.session_log.clear()
+        self.session_log.hide()
 
     def _request_back(self) -> None:
         if self.is_running():
@@ -788,6 +789,7 @@ class DirectWorkflowPage(QWidget):
         self.status_label.setText(text)
 
     def _append_log(self, text: str) -> None:
+        self.session_log.show()
         self.session_log.appendPlainText(text)
 
     def is_running(self) -> bool:
