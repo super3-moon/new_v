@@ -63,6 +63,23 @@ CARD_W = 256
 CARD_IMG_W = 232
 CARD_IMG_H = 144
 CARD_GAP = 12
+WINDOW_MIN_W = 960
+WINDOW_MIN_H = 600
+WINDOW_MAX_W = 1280
+WINDOW_MAX_H = 780
+WINDOW_SCREEN_RATIO = 0.80
+
+
+def preferred_window_size(available_width: int, available_height: int) -> tuple[int, int]:
+    width = max(
+        WINDOW_MIN_W,
+        min(WINDOW_MAX_W, int(max(0, available_width) * WINDOW_SCREEN_RATIO)),
+    )
+    height = max(
+        WINDOW_MIN_H,
+        min(WINDOW_MAX_H, int(max(0, available_height) * WINDOW_SCREEN_RATIO)),
+    )
+    return width, height
 
 
 def app_dir() -> Path:
@@ -488,8 +505,16 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("VMD + Multiwfn 绘图工作台")
-        self.resize(1500, 920)
-        self.setMinimumSize(1260, 780)
+        self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            initial_width, initial_height = 1180, 700
+        else:
+            available = screen.availableGeometry()
+            initial_width, initial_height = preferred_window_size(
+                available.width(), available.height()
+            )
+        self.resize(initial_width, initial_height)
 
         self.bundle_styles: list[dict] = []
         self.skeleton_styles: list[dict] = []

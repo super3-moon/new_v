@@ -609,3 +609,27 @@ Phase: DONE
 Files: release\2026-07-27\VMD_Multiwfn_StyleGenerator.exe
 Summary: release build completed (2026-07-27)
 Result: success
+Time: 2026-07-28 16:15:14 +08:00
+Thread: codex-adaptive-window-size-20260728
+Phase: START
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py
+Summary: Reduce the default window footprint using available-screen-aware sizing and lower the minimum size while preserving scrollable layouts.
+Result: in_progress
+Time: 2026-07-28 16:18:09 +08:00
+Thread: codex-adaptive-window-size-20260728
+Phase: DONE
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py
+Summary: Replaced the fixed oversized window with an available-screen-aware compact default and reduced the minimum size while preserving scrollable content.
+Result: 35 tests, focused navigation/window tests, syntax checks, render inspection and application self-test passed.
+Time: 2026-07-28 16:18:27 +08:00
+Thread: packaging
+Phase: START
+Files: release\2026-07-28\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build started (2026-07-28)
+Result: in_progress
+Time: 2026-07-28 16:19:41 +08:00
+Thread: packaging
+Phase: DONE
+Files: release\2026-07-28\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build completed (2026-07-28)
+Result: success
