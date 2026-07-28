@@ -621,3 +621,15 @@ Phase: DONE
 Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py
 Summary: Replaced the fixed oversized window with an available-screen-aware compact default and reduced the minimum size while preserving scrollable content.
 Result: 35 tests, focused navigation/window tests, syntax checks, render inspection and application self-test passed.
+Time: 2026-07-28 16:18:27 +08:00
+Thread: packaging
+Phase: START
+Files: release\2026-07-28\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build started (2026-07-28)
+Result: in_progress
+Time: 2026-07-28 16:19:41 +08:00
+Thread: packaging
+Phase: DONE
+Files: release\2026-07-28\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build completed (2026-07-28)
+Result: success
