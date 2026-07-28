@@ -71,9 +71,9 @@ SPLIT_CARD_GAP = 10
 WINDOW_MIN_W = 960
 WINDOW_MIN_H = 620
 WINDOW_MAX_W = 1360
-WINDOW_MAX_H = 840
+WINDOW_MAX_H = 800
 WINDOW_WIDTH_RATIO = 0.86
-WINDOW_HEIGHT_RATIO = 0.92
+WINDOW_HEIGHT_RATIO = 0.88
 
 
 def preferred_window_size(available_width: int, available_height: int) -> tuple[int, int]:
@@ -575,7 +575,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
         screen = QApplication.primaryScreen()
         if screen is None:
-            initial_width, initial_height = 1280, 760
+            initial_width, initial_height = 1280, 720
         else:
             available = screen.availableGeometry()
             initial_width, initial_height = preferred_window_size(

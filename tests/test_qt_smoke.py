@@ -52,15 +52,15 @@ class QtInterfaceSmokeTests(unittest.TestCase):
         )
 
     def test_default_window_size_is_balanced_and_screen_aware(self) -> None:
-        self.assertEqual(preferred_window_size(1536, 816), (1320, 750))
-        self.assertEqual(preferred_window_size(1920, 1040), (1360, 840))
+        self.assertEqual(preferred_window_size(1536, 816), (1320, 718))
+        self.assertEqual(preferred_window_size(1920, 1040), (1360, 800))
         self.assertEqual(preferred_window_size(1024, 640), (960, 620))
 
         window = MainWindow()
         try:
             self.assertEqual((window.minimumWidth(), window.minimumHeight()), (960, 620))
             self.assertLessEqual(window.width(), 1360)
-            self.assertLessEqual(window.height(), 840)
+            self.assertLessEqual(window.height(), 800)
         finally:
             window.close()
 

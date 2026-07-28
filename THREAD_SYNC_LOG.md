@@ -681,3 +681,15 @@ Phase: DONE
 Files: release\2026-07-28_v3\VMD_Multiwfn_StyleGenerator.exe
 Summary: release build completed (2026-07-28_v3)
 Result: success
+Time: 2026-07-28 20:00:38 +08:00
+Thread: source
+Phase: START
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
+Summary: 根据 125% 缩放下的实际外框尺寸精确校准默认窗口高度
+Result: in_progress
+Time: 2026-07-28 20:01:35 +08:00
+Thread: source
+Phase: DONE
+Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
+Summary: 完成参考图尺寸校准，默认内容尺寸约 1320x718，125% 缩放下外框约 1650x938
+Result: 36 tests, self-test, compile checks and calibrated render inspection passed
