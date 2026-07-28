@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 from style_parameter_dialog_qt6 import StyleParameterDialog
-from vmd_style_tool_qt6 import MainWindow
+from vmd_style_tool_qt6 import MainWindow, preferred_window_size
 
 
 class QtInterfaceSmokeTests(unittest.TestCase):
@@ -50,6 +50,19 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def test_default_window_size_is_compact_and_screen_aware(self) -> None:
+        self.assertEqual(preferred_window_size(1536, 816), (1228, 652))
+        self.assertEqual(preferred_window_size(1920, 1040), (1280, 780))
+        self.assertEqual(preferred_window_size(1024, 640), (960, 600))
+
+        window = MainWindow()
+        try:
+            self.assertEqual((window.minimumWidth(), window.minimumHeight()), (960, 600))
+            self.assertLessEqual(window.width(), 1280)
+            self.assertLessEqual(window.height(), 780)
+        finally:
+            window.close()
 
     def tearDown(self) -> None:
         core.CONFIG_FILE = self.original_config
