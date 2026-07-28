@@ -386,9 +386,9 @@ class MultiwfnBatchPage(QWidget):
         hero_text.addWidget(hero_title)
         hero_text.addWidget(hero_subtitle)
         hero_layout.addLayout(hero_text, 1)
-        hero_badge = QLabel("版本 2026.7.11")
-        hero_badge.setObjectName("batchBadge")
-        hero_layout.addWidget(hero_badge, 0, Qt.AlignVCenter)
+        self.hero_badge = QLabel("版本 2026.7.11")
+        self.hero_badge.setObjectName("batchBadge")
+        hero_layout.addWidget(self.hero_badge, 0, Qt.AlignVCenter)
         self._apply_shadow(hero, blur=24, offset_y=4, alpha=24)
         root.addWidget(hero)
 
@@ -401,9 +401,9 @@ class MultiwfnBatchPage(QWidget):
         preset_label.setObjectName("batchToolbarLabel")
         preset_toolbar_layout.addWidget(preset_label)
         self.preset_combo = QComboBox()
-        self.preset_combo.setMinimumWidth(240)
+        self.preset_combo.setMinimumWidth(150)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_selection_changed)
-        preset_toolbar_layout.addWidget(self.preset_combo)
+        preset_toolbar_layout.addWidget(self.preset_combo, 1)
 
         self.new_preset_button = QPushButton("+")
         self.new_preset_button.setObjectName("batchAddFlowButton")
@@ -455,6 +455,7 @@ class MultiwfnBatchPage(QWidget):
         task_splitter = QSplitter(Qt.Horizontal)
         task_splitter.setChildrenCollapsible(False)
         task_splitter.setHandleWidth(10)
+        self.task_splitter = task_splitter
         task_page_layout.addWidget(task_splitter, 1)
 
         input_frame, input_layout = self._pane("待处理文件")
@@ -539,7 +540,7 @@ class MultiwfnBatchPage(QWidget):
         run_layout.addWidget(self.start_button)
         task_splitter.addWidget(run_frame)
         task_splitter.setSizes([760, 360])
-        self.task_scroll = self._scrollable_page(task_page, 670)
+        self.task_scroll = self._scrollable_page(task_page, 560)
         self.workspace_tabs.addTab(self.task_scroll, "① 选择文件")
 
         template_page = QWidget()
@@ -806,7 +807,7 @@ class MultiwfnBatchPage(QWidget):
         empty_page = QFrame()
         empty_page.setObjectName("batchEmptyState")
         empty_layout = QVBoxLayout(empty_page)
-        empty_layout.setContentsMargins(30, 38, 30, 38)
+        empty_layout.setContentsMargins(24, 24, 24, 24)
         empty_layout.setSpacing(10)
         empty_layout.addStretch(1)
         empty_icon = QLabel("◎")
@@ -845,6 +846,9 @@ class MultiwfnBatchPage(QWidget):
         result_content_layout = QVBoxLayout(result_content)
         result_content_layout.setContentsMargins(0, 0, 0, 0)
         result_splitter = QSplitter(Qt.Horizontal)
+        result_splitter.setChildrenCollapsible(False)
+        result_splitter.setHandleWidth(10)
+        self.result_splitter = result_splitter
         self.queue_table = QTableWidget(0, 5)
         self.queue_table.setHorizontalHeaderLabels(["#", "输入文件", "状态", "耗时", "输出/说明"])
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -864,7 +868,7 @@ class MultiwfnBatchPage(QWidget):
         self.batch_log.setMaximumBlockCount(5000)
         result_splitter.addWidget(self.batch_log)
         result_splitter.setSizes([760, 440])
-        result_splitter.setMinimumHeight(470)
+        result_splitter.setMinimumHeight(360)
         result_content_layout.addWidget(result_splitter, 1)
         self.result_stack.addWidget(result_content)
         self.result_stack.setCurrentIndex(0)
@@ -874,9 +878,42 @@ class MultiwfnBatchPage(QWidget):
         self.run_summary_label.setWordWrap(True)
         queue_layout.addWidget(self.run_summary_label)
         result_page_layout.addWidget(queue_frame, 1)
-        self.results_scroll = self._scrollable_page(result_page, 690)
+        self.results_scroll = self._scrollable_page(result_page, 500)
         self.workspace_tabs.addTab(self.results_scroll, "③ 运行结果")
         self.workspace_tabs.setCurrentIndex(0)
+        self._update_responsive_layout()
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self) -> None:
+        if not all(
+            hasattr(self, name)
+            for name in (
+                "task_splitter",
+                "result_splitter",
+                "hero_badge",
+                "preset_summary_label",
+            )
+        ):
+            return
+        width = max(0, self.width())
+        compact = width < 860
+        task_orientation = Qt.Vertical if compact else Qt.Horizontal
+        if self.task_splitter.orientation() != task_orientation:
+            self.task_splitter.setOrientation(task_orientation)
+            self.task_splitter.setSizes([520, 260] if compact else [760, 360])
+
+        result_orientation = Qt.Vertical if width < 900 else Qt.Horizontal
+        if self.result_splitter.orientation() != result_orientation:
+            self.result_splitter.setOrientation(result_orientation)
+            self.result_splitter.setSizes(
+                [330, 230] if result_orientation == Qt.Vertical else [760, 440]
+            )
+
+        self.hero_badge.setVisible(width >= 650)
+        self.preset_summary_label.setVisible(width >= 930)
 
     def load_settings(self, config: dict) -> None:
         output_dir = str(

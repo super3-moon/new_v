@@ -633,3 +633,15 @@ Phase: DONE
 Files: release\2026-07-28\VMD_Multiwfn_StyleGenerator.exe
 Summary: release build completed (2026-07-28)
 Result: success
+Time: 2026-07-28 18:38:16 +08:00
+Thread: source
+Phase: START
+Files: vmd_style_tool_qt6.py; multiwfn_batch_qt6.py; style_parameter_dialog_qt6.py; tests/test_qt_smoke.py
+Summary: 优化默认窗口比例、响应式布局、参数查看模式与界面一致性
+Result: in_progress
+Time: 2026-07-28 18:50:24 +08:00
+Thread: source
+Phase: DONE
+Files: vmd_style_tool_qt6.py; vmd_style_tool.py; multiwfn_batch_qt6.py; direct_workflow_qt6.py; style_parameter_dialog_qt6.py; tests/test_qt_smoke.py; README.md
+Summary: 完成紧凑默认窗口、可折叠侧栏、拆分/批量响应式布局、AI 表单重排、参数摘要视图和视觉一致性优化
+Result: 36 tests, self-test, syntax checks and six-page render inspection passed

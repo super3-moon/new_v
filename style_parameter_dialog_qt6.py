@@ -92,8 +92,8 @@ class StyleParameterDialog(QDialog):
 
         self.setWindowTitle("风格详细参数")
         self.setModal(True)
-        self.resize(860, 720)
-        self.setMinimumSize(700, 560)
+        self.resize(780, 680)
+        self.setMinimumSize(680, 540)
         self._build_ui(selection_text)
         self._set_editing(False)
 
@@ -112,6 +112,104 @@ class StyleParameterDialog(QDialog):
             helper.setWordWrap(True)
             layout.addWidget(helper)
         return card, layout
+
+    @staticmethod
+    def _state_text(value: bool | None) -> str:
+        if value is True:
+            return "开启"
+        if value is False:
+            return "关闭"
+        return "保持原设置"
+
+    def _color_text(self, prefix: str, color_id: int | None = None) -> str:
+        explicit = bool(self.parameters.get(f"{prefix}_rgb_explicit"))
+        rgb = self.parameters.get(f"{prefix}_rgb") or (0.5, 0.5, 0.5)
+        if explicit:
+            return self._rgb_text(tuple(rgb))
+        if color_id is not None:
+            return f"VMD 色号 {color_id}"
+        return "保持风格原色"
+
+    @staticmethod
+    def _add_summary_row(
+        layout: QGridLayout, row: int, title: str, value: str
+    ) -> None:
+        title_label = QLabel(title)
+        title_label.setObjectName("parameterSummaryLabel")
+        value_label = QLabel(value)
+        value_label.setObjectName("parameterSummaryValue")
+        value_label.setWordWrap(True)
+        layout.addWidget(title_label, row, 0, Qt.AlignTop)
+        layout.addWidget(value_label, row, 1)
+
+    def _build_summary_card(self) -> QFrame:
+        card, layout = self._card(
+            "当前风格摘要",
+            "这里只展示绘图时真正生效的视觉设置；需要调整时再进入编辑。",
+        )
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(0)
+        grid.setColumnStretch(1, 1)
+
+        positive = self._color_text("positive", self.parameters.get("pos_color_id"))
+        negative = self._color_text("negative", self.parameters.get("neg_color_id"))
+        self._add_summary_row(
+            grid,
+            0,
+            "等值面",
+            f"{self.parameters.get('material') or 'Glossy'} · 正相 {positive} · 负相 {negative}",
+        )
+
+        material_values = []
+        for key, value in (self.parameters.get("material_values") or {}).items():
+            if value is not None and key in MATERIAL_LABELS:
+                material_values.append(
+                    f"{MATERIAL_LABELS[key].split()[0]} {float(value):.3f}"
+                )
+        self._add_summary_row(
+            grid,
+            1,
+            "材质参数",
+            " · ".join(material_values) if material_values else "使用材质默认参数",
+        )
+
+        display_parts = [
+            f"投影 {self.parameters.get('projection') or '保持原设置'}",
+            f"渲染 {self.parameters.get('rendermode') or '保持原设置'}",
+            f"坐标轴 {self.parameters.get('axes') or '保持原设置'}",
+            f"景深 {self._state_text(self.parameters.get('depthcue'))}",
+            f"AO {self._state_text(self.parameters.get('ambient_occlusion'))}",
+            f"阴影 {self._state_text(self.parameters.get('shadows'))}",
+            f"抗锯齿 {self._state_text(self.parameters.get('antialias'))}",
+        ]
+        self._add_summary_row(grid, 2, "显示效果", " · ".join(display_parts))
+
+        lights = self.parameters.get("lights") or {}
+        light_parts = [
+            f"{index} {self._state_text(lights.get(str(index)))}" for index in range(4)
+        ]
+        self._add_summary_row(grid, 3, "灯光", " · ".join(light_parts))
+
+        skeleton_color = self._color_text("skeleton")
+        self._add_summary_row(
+            grid,
+            4,
+            "分子骨架",
+            (
+                f"{self.parameters.get('skeleton_style') or 'CPK'} · "
+                f"{self.parameters.get('skeleton_material') or 'Glossy'} · "
+                f"{skeleton_color}"
+            ),
+        )
+        self._add_summary_row(
+            grid,
+            5,
+            "背景",
+            self._color_text("background"),
+        )
+        layout.addLayout(grid)
+        return card
 
     @staticmethod
     def _add_combo(combo: QComboBox, label: str, value: Any) -> None:
@@ -147,16 +245,20 @@ class StyleParameterDialog(QDialog):
         header_layout.addWidget(selection)
         root.addWidget(header)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         body = QWidget()
         body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(2, 2, 8, 8)
         body_layout.setSpacing(12)
-        scroll.setWidget(body)
-        root.addWidget(scroll, 1)
+        self.scroll.setWidget(body)
+        root.addWidget(self.scroll, 1)
+
+        self.summary_card = self._build_summary_card()
+        body_layout.addWidget(self.summary_card)
+        self.edit_cards: list[QFrame] = []
 
         iso_card, iso_layout = self._card(
             "等值面表现",
@@ -173,6 +275,7 @@ class StyleParameterDialog(QDialog):
         iso_layout.addWidget(self._make_color_row("positive", "正等值面", self.parameters["pos_color_id"], self.parameters["positive_rgb"], self.parameters["positive_rgb_explicit"]))
         iso_layout.addWidget(self._make_color_row("negative", "负等值面", self.parameters["neg_color_id"], self.parameters["negative_rgb"], self.parameters["negative_rgb_explicit"]))
         body_layout.addWidget(iso_card)
+        self.edit_cards.append(iso_card)
 
         material_card, material_layout = self._card(
             "材质光学参数",
@@ -205,6 +308,7 @@ class StyleParameterDialog(QDialog):
             self.material_rows[key] = override, spin
         material_layout.addLayout(material_grid)
         body_layout.addWidget(material_card)
+        self.edit_cards.append(material_card)
 
         display_card, display_layout = self._card("显示与灯光")
         display_form = QFormLayout()
@@ -262,6 +366,7 @@ class StyleParameterDialog(QDialog):
             light_grid.addWidget(holder, row, column)
         display_layout.addLayout(light_grid)
         body_layout.addWidget(display_card)
+        self.edit_cards.append(display_card)
 
         skeleton_card, skeleton_layout = self._card(
             "分子骨架",
@@ -273,7 +378,7 @@ class StyleParameterDialog(QDialog):
         self.skeleton_style_combo.addItems(["CPK", "Licorice", "Bonds", "Lines"])
         self.skeleton_style_combo.setCurrentText(self.parameters["skeleton_style"])
         self.edit_widgets.append(self.skeleton_style_combo)
-        skeleton_form.addRow("Drawing Method", self.skeleton_style_combo)
+        skeleton_form.addRow("绘制方式", self.skeleton_style_combo)
         self.skeleton_material_combo = QComboBox()
         self.skeleton_material_combo.addItems(core.VMD_MATERIALS)
         self.skeleton_material_combo.setCurrentText(self.parameters["skeleton_material"])
@@ -295,10 +400,12 @@ class StyleParameterDialog(QDialog):
             skeleton_layout.addWidget(skeleton_material_detail)
         skeleton_layout.addWidget(self._make_color_row("skeleton", "碳原子/骨架颜色", None, self.parameters["skeleton_rgb"], self.parameters["skeleton_rgb_explicit"]))
         body_layout.addWidget(skeleton_card)
+        self.edit_cards.append(skeleton_card)
 
         background_card, background_layout = self._card("背景")
         background_layout.addWidget(self._make_color_row("background", "显示背景", None, self.parameters["background_rgb"], self.parameters["background_rgb_explicit"]))
         body_layout.addWidget(background_card)
+        self.edit_cards.append(background_card)
 
         save_card, save_layout = self._card(
             "保存信息",
@@ -316,6 +423,7 @@ class StyleParameterDialog(QDialog):
         save_layout.addLayout(save_form)
         self.save_card = save_card
         body_layout.addWidget(save_card)
+        self.edit_cards.append(save_card)
         body_layout.addStretch(1)
 
         footer = QHBoxLayout()
@@ -437,11 +545,15 @@ class StyleParameterDialog(QDialog):
             widget.setEnabled(editing)
         for override, spin in self.material_rows.values():
             spin.setEnabled(editing and override.isChecked())
-        self.save_card.setVisible(editing)
+        self.summary_card.setVisible(not editing)
+        for card in self.edit_cards:
+            card.setVisible(editing)
         self.close_button.setVisible(not editing)
         self.edit_button.setVisible(not editing)
         self.cancel_edit_button.setVisible(editing)
         self.save_button.setVisible(editing)
+        self.scroll.verticalScrollBar().setValue(0)
+        self.resize(self.width(), 680 if editing else 540)
 
     def _collect(self) -> dict:
         output = dict(self.parameters)

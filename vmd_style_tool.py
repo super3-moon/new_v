@@ -153,7 +153,7 @@ RAW_STYLES = [
     },
     {
         "id": "bright_bule_yellow_userpack",
-        "name": "Bright Bule+Yellow",
+        "name": "Bright Blue + Yellow",
         "image": "23_bright_blue_yellow.png",
         "material": "Glossy",
         "pos_color": 12,
@@ -177,7 +177,7 @@ RAW_STYLES = [
     },
     {
         "id": "modern_cool_palette_userpack",
-        "name": "Modern cool palette",
+        "name": "Modern Cool Palette",
         "image": "24_modern_cool_palette.png",
         "material": "Glossy",
         "pos_color": 13,
