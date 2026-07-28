@@ -669,3 +669,15 @@ Phase: DONE
 Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
 Summary: 完成平衡默认窗口、常驻程序路径与日志，以及拆分模式等宽左右双列卡片布局
 Result: 36 tests, self-test, compile checks and three-size render inspection passed
+Time: 2026-07-28 19:51:10 +08:00
+Thread: packaging
+Phase: START
+Files: release\2026-07-28_v3\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build started (2026-07-28_v3)
+Result: in_progress
+Time: 2026-07-28 19:52:31 +08:00
+Thread: packaging
+Phase: DONE
+Files: release\2026-07-28_v3\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build completed (2026-07-28_v3)
+Result: success
