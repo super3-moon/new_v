@@ -693,3 +693,15 @@ Phase: DONE
 Files: vmd_style_tool_qt6.py; tests/test_qt_smoke.py; README.md
 Summary: 完成参考图尺寸校准，默认内容尺寸约 1320x718，125% 缩放下外框约 1650x938
 Result: 36 tests, self-test, compile checks and calibrated render inspection passed
+Time: 2026-07-28 20:02:25 +08:00
+Thread: packaging
+Phase: START
+Files: release\2026-07-28_v4\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build started (2026-07-28_v4)
+Result: in_progress
+Time: 2026-07-28 20:03:31 +08:00
+Thread: packaging
+Phase: DONE
+Files: release\2026-07-28_v4\VMD_Multiwfn_StyleGenerator.exe
+Summary: release build completed (2026-07-28_v4)
+Result: success
