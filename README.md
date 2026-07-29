@@ -29,7 +29,7 @@
 ## 快速开始
 
 1. 从 [Releases](https://github.com/super3-moon/new_v/releases/latest) 下载最新版 `VMD_Multiwfn_StyleGenerator.exe`。
-2. 准备本机的 `Multiwfn.exe` 与 `vmd.exe`。
+2. 从 [Multiwfn 官网](http://sobereva.com/multiwfn/) 和 [VMD 官网](https://www.ks.uiuc.edu/Research/vmd/) 下载并安装程序，准备好 `Multiwfn.exe` 与 `vmd.exe`。
 3. 启动程序，在左侧设置或自动扫描软件路径。
 4. 选择绘图风格，然后使用“直接绘图”“导出脚本”或“批量 Multiwfn”。
 
