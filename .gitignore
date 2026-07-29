@@ -23,11 +23,30 @@ vmd_cube_styles/custom_*_cover.*
 # Bundled third-party runtime folders
 Multiwfn_*_bin_Win64/
 vmd19.3/
+/batch/
+/file/
+/tmp/
 
 # Local machine configuration
 vmd_style_tool_config.json
 multiwfn_batch_presets.json
 batch_runs/
+
+# Private project-management and agent material
+/.internal/
+/.codex/
+/.claude/
+/AGENTS.md
+/SKILL.md
+/.github/pull_request_template.md
+/GIT_GITHUB_WORKFLOW.md
+/RELEASE_POLICY.md
+/STYLE_PARAMETER_AUDIT_*.md
+/THREAD_SYNC_LOG.md
+/append_sync_log.ps1
+/cleanup_project.ps1
+/工程结构.md
+/工程说明_协作规范.md
 
 # Generated molecular / rendering working files
 *.cub

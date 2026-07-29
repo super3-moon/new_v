@@ -12,7 +12,6 @@ $specFile = Join-Path $root "VMD_Multiwfn_StyleGenerator.spec"
 $entry = Join-Path $root "vmd_style_tool_qt6.py"
 $styleDir = Join-Path $root "vmd_cube_styles"
 $customJson = Join-Path $root "vmd_custom_styles.default.json"
-$logScript = Join-Path $root "append_sync_log.ps1"
 
 foreach ($required in @($specFile, $entry, $styleDir, $customJson)) {
     if (-not (Test-Path -LiteralPath $required)) {
@@ -50,15 +49,6 @@ else {
 $distPath = Join-Path $releaseRoot $folderName
 New-Item -ItemType Directory -Path $distPath | Out-Null
 
-if (Test-Path -LiteralPath $logScript) {
-    & $logScript `
-      -Thread "packaging" `
-      -Phase "START" `
-      -Files "release\$folderName\VMD_Multiwfn_StyleGenerator.exe" `
-      -Summary "release build started ($folderName)" `
-      -Result "in_progress" | Out-Null
-}
-
 Write-Output "Building release to: $distPath"
 
 $args = @(
@@ -78,15 +68,6 @@ if ($LASTEXITCODE -ne 0) {
 $exePath = Join-Path $distPath "VMD_Multiwfn_StyleGenerator.exe"
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Release EXE not found: $exePath"
-}
-
-if (Test-Path -LiteralPath $logScript) {
-    & $logScript `
-      -Thread "packaging" `
-      -Phase "DONE" `
-      -Files "release\$folderName\VMD_Multiwfn_StyleGenerator.exe" `
-      -Summary "release build completed ($folderName)" `
-      -Result "success" | Out-Null
 }
 
 Write-Output "Release ready: $exePath"
