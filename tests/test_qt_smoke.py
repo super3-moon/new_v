@@ -528,6 +528,53 @@ class QtInterfaceSmokeTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_direct_esp_style_uses_density_and_potential_cube_pair(self) -> None:
+        window = MainWindow()
+        try:
+            root = Path(self.temp_dir.name)
+            density = root / "density1.cub"
+            esp = root / "ESP1.cub"
+            header = (
+                "cube title\n"
+                "generated for test\n"
+                " 1 0.0 0.0 0.0\n"
+                " 2 0.5 0.0 0.0\n"
+                " 2 0.0 0.5 0.0\n"
+                " 2 0.0 0.0 0.5\n"
+                " 1 0.0 0.0 0.0 0.0\n"
+            )
+            density.write_text(header, encoding="utf-8")
+            esp.write_text(header, encoding="utf-8")
+            fake_vmd = root / "vmd.exe"
+            fake_vmd.write_bytes(b"")
+            window.vmd_edit.setText(str(fake_vmd))
+
+            window._show_direct_workflow()
+            page = window.direct_page
+            style = core.STYLE_BY_ID["esp_e1_bwr_glossy"]
+            page.configure_style(style, None, "ESP test")
+            page.set_source_file(str(density))
+            self.assertEqual(page.iso_edit.text(), "0.001")
+
+            fake_process = mock.Mock()
+            fake_process.poll.return_value = None
+            with mock.patch(
+                "direct_workflow_qt6.subprocess.Popen", return_value=fake_process
+            ) as popen:
+                page.start_workflow()
+            _, kwargs = popen.call_args
+            self.assertEqual(kwargs["env"]["CUBE_FILE"], str(density.resolve()))
+            self.assertEqual(kwargs["env"]["COLOR_CUBE_FILE"], str(esp.resolve()))
+            tcl = Path(popen.call_args.args[0][2]).read_text(encoding="utf-8")
+            self.assertIn("mol modcolor 1 top Volume 1", tcl)
+            self.assertNotIn("set negiso", tcl)
+
+            page.process_timer.stop()
+            page.vmd_process = None
+            page.cleanup()
+        finally:
+            window.close()
+
     def test_direct_workflow_opens_visible_multiwfn_for_non_cube_input(self) -> None:
         window = MainWindow()
         try:
@@ -606,7 +653,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             dialog.show()
             self.app.processEvents()
             self.assertEqual(dialog.material_combo.currentText(), "Glossy")
-            self.assertEqual(len(dialog.material_rows), 8)
+            self.assertEqual(len(dialog.material_rows), len(core.MATERIAL_PARAMETER_NAMES))
             self.assertFalse(dialog.material_rows["specular"][0].isChecked())
             self.assertTrue(dialog.material_rows["opacity"][0].isChecked())
             self.assertTrue(dialog.edit_button.isVisible())

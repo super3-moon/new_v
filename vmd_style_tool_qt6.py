@@ -2566,6 +2566,12 @@ class MainWindow(QMainWindow):
         self._show_style_selection()
 
     def _subtitle_iso(self, st: dict) -> str:
+        if st.get("surface_mode") == "volume_mapped":
+            method = st.get("color_scale_method", "BWR")
+            low = float(st.get("color_scale_min", -0.03))
+            high = float(st.get("color_scale_max", 0.03))
+            draw = "Wireframe" if int(st.get("surface_draw", 0)) == 1 else "Solid Surface"
+            return f"{st.get('material', 'Glossy')} | ESP {method} {low:g}～{high:g} | {draw}"
         pos = st.get("pos_color_expr", f"ColorID {st.get('pos_color', 1)}")
         neg = st.get("neg_color_expr", f"ColorID {st.get('neg_color', 0)}")
         return f"{st.get('material', 'Glossy')} | {pos}/{neg}"
@@ -2636,9 +2642,17 @@ class MainWindow(QMainWindow):
         self._refresh_material_filter()
 
         if self.selected_bundle_id not in self.bundle_map and self.bundle_styles:
-            self.selected_bundle_id = self.bundle_styles[0]["id"]
+            self.selected_bundle_id = (
+                core.DEFAULT_STYLE_ID
+                if core.DEFAULT_STYLE_ID in self.bundle_map
+                else self.bundle_styles[0]["id"]
+            )
         if self.selected_iso_id not in self.bundle_map and self.bundle_styles:
-            self.selected_iso_id = self.bundle_styles[0]["id"]
+            self.selected_iso_id = (
+                core.DEFAULT_STYLE_ID
+                if core.DEFAULT_STYLE_ID in self.bundle_map
+                else self.bundle_styles[0]["id"]
+            )
         if self.selected_skeleton_id not in self.skeleton_map and self.skeleton_styles:
             self.selected_skeleton_id = self.skeleton_styles[0]["id"]
         self._refresh_lists()

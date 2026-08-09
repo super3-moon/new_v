@@ -80,43 +80,232 @@ BASE_VIEW = [
     "axes location Off",
 ]
 
+GLOSSY_DEFAULT = [
+    "material change ambient Glossy 0.000000",
+    "material change diffuse Glossy 0.650000",
+    "material change specular Glossy 1.000000",
+    "material change shininess Glossy 0.880000",
+    "material change mirror Glossy 0.000000",
+    "material change opacity Glossy 1.000000",
+    "material change outline Glossy 0.000000",
+    "material change outlinewidth Glossy 0.000000",
+    "material change transmode Glossy 0.000000",
+]
+
+TRANSLUCENT_DEFAULT = [
+    "material change ambient Translucent 0.000000",
+    "material change diffuse Translucent 0.700000",
+    "material change specular Translucent 0.600000",
+    "material change shininess Translucent 0.300000",
+    "material change mirror Translucent 0.000000",
+    "material change opacity Translucent 0.800000",
+    "material change outline Translucent 0.000000",
+    "material change outlinewidth Translucent 0.000000",
+    "material change transmode Translucent 0.000000",
+]
+
+DIFFUSE_DEFAULT = [
+    "material change ambient Diffuse 0.000000",
+    "material change diffuse Diffuse 0.620000",
+    "material change specular Diffuse 0.000000",
+    "material change shininess Diffuse 0.530000",
+    "material change mirror Diffuse 0.000000",
+    "material change opacity Diffuse 1.000000",
+    "material change outline Diffuse 0.000000",
+    "material change outlinewidth Diffuse 0.000000",
+    "material change transmode Diffuse 0.000000",
+]
+
+OPAQUE_DEFAULT = [
+    "material change ambient Opaque 0.000000",
+    "material change diffuse Opaque 0.650000",
+    "material change specular Opaque 0.500000",
+    "material change shininess Opaque 0.534020",
+    "material change mirror Opaque 0.000000",
+    "material change opacity Opaque 1.000000",
+    "material change outline Opaque 0.000000",
+    "material change outlinewidth Opaque 0.000000",
+    "material change transmode Opaque 0.000000",
+]
+
+EDGYGLASS_DEFAULT = [
+    "material change ambient EdgyGlass 0.000000",
+    "material change diffuse EdgyGlass 0.660000",
+    "material change specular EdgyGlass 0.500000",
+    "material change shininess EdgyGlass 0.750000",
+    "material change mirror EdgyGlass 0.000000",
+    "material change opacity EdgyGlass 0.620000",
+    "material change outline EdgyGlass 0.620000",
+    "material change outlinewidth EdgyGlass 0.940000",
+    "material change transmode EdgyGlass 0.000000",
+]
+
+ESP_COMMON = {
+    "surface_mode": "volume_mapped",
+    "default_iso_value": 0.001,
+    "surface_draw": 0,
+    "surface_boundary": 0,
+    "surface_step": 1,
+    "surface_size": 1,
+    "pos_color": 1,
+    "neg_color": 0,
+}
+
+
+def _esp_style(**values: object) -> dict:
+    style = dict(ESP_COMMON)
+    style.update(values)
+    return style
+
+
 RAW_STYLES = [
-    {
-        "id": "classic_glossy_447",
-        "name": "Classic Glossy (Red/Blue)",
-        "image": "07_glossy_default.jpg",
-        "material": "Glossy",
-        "pos_color": 1,
-        "neg_color": 0,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 off",
+    _esp_style(
+        id="esp_e1_bwr_glossy",
+        code="E1",
+        name="E1 ESP · BWR Glossy",
+        image="25_esp_e1_bwr_glossy.png",
+        material="Glossy",
+        color_scale_method="BWR",
+        color_scale_min=-0.03,
+        color_scale_max=0.03,
+        commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + GLOSSY_DEFAULT,
+        sources=[
+            "Multiwfn examples/drawESP/ESPiso.vmd",
+            "https://www.umsyar.com/443",
+            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node124.html",
         ],
-        "sources": ["http://sobereva.com/447"],
-        "notes": "Default showorb-style dual-color glossy isosurface.",
+        notes="电子密度等值面（默认 0.001 a.u.）映射 ESP；BWR，势能范围 -0.03 至 +0.03 a.u.。",
+    ),
+    _esp_style(
+        id="esp_e2_bwr_translucent",
+        code="E2",
+        name="E2 ESP · BWR Translucent",
+        image="26_esp_e2_bwr_translucent.png",
+        material="Translucent",
+        color_scale_method="BWR",
+        color_scale_min=-0.03,
+        color_scale_max=0.03,
+        commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + TRANSLUCENT_DEFAULT,
+        sources=[
+            "Multiwfn examples/drawESP/ESPiso.vmd",
+            "https://www.umsyar.com/443",
+            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
+        ],
+        notes="与 E1 使用同一 ESP 映射和范围，仅改用 VMD 1.9.3 的 Translucent 材质参数。",
+    ),
+    _esp_style(
+        id="esp_e3_bwr_edgyglass_443",
+        code="E3",
+        name="E3 ESP · BWR EdgyGlass",
+        image="27_esp_e3_bwr_edgyglass.png",
+        material="EdgyGlass",
+        color_scale_method="BWR",
+        color_scale_min=-0.03,
+        color_scale_max=0.03,
+        commands=BASE_VIEW + [
+            "color scale method BWR",
+            "light 2 on",
+            "light 3 on",
+            "material change transmode EdgyGlass 1.000000",
+            "material change specular EdgyGlass 0.150000",
+            "material change shininess EdgyGlass 0.950000",
+            "material change opacity EdgyGlass 0.700000",
+            "material change outlinewidth EdgyGlass 0.900000",
+            "material change outline EdgyGlass 0.500000",
+        ],
+        sources=["Multiwfn examples/drawESP/ESPiso.vmd", "https://www.umsyar.com/443"],
+        notes="Multiwfn ESPiso.vmd 的 EdgyGlass 原始参数；BWR，-0.03 至 +0.03 a.u.。",
+    ),
+    _esp_style(
+        id="esp_e4_turbo_edgyglass_443",
+        code="E4",
+        name="E4 ESP · Turbo EdgyGlass",
+        image="28_esp_e4_turbo_edgyglass.png",
+        material="EdgyGlass",
+        color_scale_method="Turbo",
+        color_scale_min=-0.06,
+        color_scale_max=0.06,
+        commands=BASE_VIEW + [
+            "display projection Orthographic",
+            "material change outline EdgyGlass 0.590000",
+            "material change outlinewidth EdgyGlass 0.340000",
+            "material change opacity EdgyGlass 0.730000",
+            "material change shininess EdgyGlass 0.800000",
+            "material change diffuse EdgyGlass 0.800000",
+            "material change specular EdgyGlass 0.250000",
+        ],
+        sources=["https://www.umsyar.com/443", "https://research.google/blog/turbo-an-improved-rainbow-colormap-for-visualization/"],
+        notes="思想家公社示例的 Turbo、正交投影与 EdgyGlass 参数；范围 -0.06 至 +0.06 a.u.。VMD 1.9.3 用内置色表兼容实现。",
+    ),
+    _esp_style(
+        id="esp_e5_bwr_diffuse",
+        code="E5",
+        name="E5 ESP · BWR Diffuse",
+        image="29_esp_e5_bwr_diffuse.png",
+        material="Diffuse",
+        color_scale_method="BWR",
+        color_scale_min=-0.03,
+        color_scale_max=0.03,
+        commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + DIFFUSE_DEFAULT,
+        sources=[
+            "Multiwfn examples/drawESP/ESPiso.vmd",
+            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
+        ],
+        notes="BWR 映射配 VMD 1.9.3 Diffuse 默认参数，形成无高光的哑光等值面。",
+    ),
+    _esp_style(
+        id="esp_e7_bwr_wireframe",
+        code="E7",
+        name="E7 ESP · BWR Wireframe",
+        image="30_esp_e7_bwr_wireframe.png",
+        material="Opaque",
+        color_scale_method="BWR",
+        color_scale_min=-0.03,
+        color_scale_max=0.03,
+        surface_draw=1,
+        surface_step=3,
+        commands=BASE_VIEW + ["color scale method BWR"] + OPAQUE_DEFAULT,
+        sources=[
+            "Multiwfn examples/drawESP/ESPiso.vmd",
+            "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/30407.html",
+        ],
+        notes="ESP 映射电子密度等值面，VMD Isosurface Draw=Wireframe，Step=3 形成可辨识网格（不是极值点或表面顶点）。",
+    ),
+    {
+        "id": "density_d1_green_blue_glossy",
+        "code": "D1",
+        "name": "D1 Density Difference · Green/Blue Glossy",
+        "image": "01_dual_color_basic.png",
+        "surface_mode": "signed",
+        "material": "Glossy",
+        "pos_color": 7,
+        "neg_color": 0,
+        "commands": BASE_VIEW + ["light 3 on"] + GLOSSY_DEFAULT,
+        "sources": ["https://www.umsyar.com/483", "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/30407.html"],
+        "notes": "电子密度差正值绿色、负值蓝色；两张 Solid Surface 等值面。",
     },
     {
-        "id": "classic_glossy_483",
-        "name": "Classic Glossy (showcub)",
-        "image": "01_dual_color_basic.png",
+        "id": "density_d2_red_blue_glossy",
+        "code": "D2",
+        "name": "D2 Density Difference · Red/Blue Glossy",
+        "image": "07_glossy_default.jpg",
+        "surface_mode": "signed",
         "material": "Glossy",
         "pos_color": 1,
         "neg_color": 0,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 off",
+        "commands": BASE_VIEW + ["light 3 on"] + GLOSSY_DEFAULT,
+        "sources": [
+            "Multiwfn examples/scripts/showorb.vmd",
+            "https://crystalexplorer.net/docs/manual/isosurfaces/other-surfaces/",
         ],
-        "sources": ["http://sobereva.com/483"],
-        "notes": "Same visual core as showorb classic style.",
+        "notes": "经典红/蓝正负电子密度差配色；参数与 Multiwfn showorb.vmd 一致。",
     },
     {
         "id": "soft_glossy_449",
-        "name": "Soft Artistic Glossy",
+        "code": "D3",
+        "name": "D3 Density Difference · Soft Lime/Cyan",
         "image": "08_vmdrender_soft_material.jpg",
+        "surface_mode": "signed",
         "material": "Glossy",
         "pos_color": 12,
         "neg_color": 22,
@@ -125,60 +314,73 @@ RAW_STYLES = [
             "color change rgb tan 0.700000 0.560000 0.360000",
             "material change mirror Opaque 0.15",
             "material change outline Opaque 4.000000",
-            "material change outlinewidth Opaque 0.5",
-            "material change ambient Glossy 0.1",
+            "material change outlinewidth Opaque 0.500000",
+            "material change ambient Glossy 0.100000",
             "material change diffuse Glossy 0.600000",
-            "material change opacity Glossy 0.75",
-            "material change shininess Glossy 1.0",
+            "material change opacity Glossy 0.750000",
+            "material change shininess Glossy 1.000000",
             "light 3 on",
         ],
-        "sources": ["http://sobereva.com/449"],
-        "notes": "Color and material tuning from VMDrender.txt logic.",
+        "sources": ["Multiwfn examples/scripts/showcub.vmd", "https://www.umsyar.com/449"],
+        "notes": "Multiwfn showcub.vmd / 思想家公社 449 的柔和 Lime/Cyan 参数。",
     },
     {
         "id": "edgyglass_overlap_483",
-        "name": "Overlap Emphasis (EdgyGlass)",
+        "code": "D4",
+        "name": "D4 Density Difference · Lime/Cyan EdgyGlass",
         "image": "03_iso2_overlap_cube.png",
+        "surface_mode": "signed",
         "material": "EdgyGlass",
         "pos_color": 12,
         "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 on",
-        ],
-        "sources": ["http://sobereva.com/483"],
-        "notes": "Good for two-cube overlap readability.",
+        "commands": BASE_VIEW + ["light 0 on", "light 1 on", "light 2 on", "light 3 on"] + EDGYGLASS_DEFAULT,
+        "sources": ["https://www.umsyar.com/483", "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html"],
+        "notes": "用于正负区域交叠辨识的 EdgyGlass；显式记录 VMD 1.9.3 默认材质参数。",
     },
     {
-        "id": "bright_bule_yellow_userpack",
-        "name": "Bright Blue + Yellow",
+        "id": "bright_blue_yellow_userpack",
+        "code": "D5",
+        "name": "D5 Density Difference · Bright Cyan/Yellow",
         "image": "23_bright_blue_yellow.png",
+        "surface_mode": "signed",
         "material": "Glossy",
         "pos_color": 12,
         "neg_color": 22,
+        "alias_ids": ["bright_bule_yellow_userpack"],
         "commands": BASE_VIEW + [
             "color Display Background silver",
             "color change rgb silver 0.960000 0.960000 0.960000",
             "color change rgb 12 0.030000 0.740000 0.830000",
             "color change rgb 22 0.920000 0.770000 0.090000",
             "display projection Orthographic",
-            "display depthcue off",
-            "axes location Off",
             "material change ambient Glossy 0.100000",
             "material change specular Glossy 0.080000",
             "material change diffuse Glossy 0.920000",
             "material change shininess Glossy 0.040000",
             "material change opacity Glossy 1.000000",
         ],
-        "sources": ["user-upload:param-pack"],
-        "notes": "Imported from Bright_Bule+Yellow.txt",
+        "sources": ["user-upload:Bright_Bule+Yellow.txt"],
+        "notes": "用户参数包的高对比青/黄方案；修正内部拼写并保留旧 ID 作为别名。",
+    },
+    {
+        "id": "density_d6_green_orange_diffuse",
+        "code": "D6",
+        "name": "D6 Density Difference · Green/Orange Matte",
+        "image": "12_rdg_light3_on.png",
+        "surface_mode": "signed",
+        "material": "Diffuse",
+        "pos_color": 7,
+        "neg_color": 3,
+        "commands": BASE_VIEW + DIFFUSE_DEFAULT,
+        "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html", "https://www.umsyar.com/483"],
+        "notes": "绿色/橙色正负区配 VMD Diffuse 哑光材质。",
     },
     {
         "id": "modern_cool_palette_userpack",
-        "name": "Modern Cool Palette",
+        "code": "D7",
+        "name": "D7 Density Difference · Modern Cool Palette",
         "image": "24_modern_cool_palette.png",
+        "surface_mode": "signed",
         "material": "Glossy",
         "pos_color": 13,
         "neg_color": 24,
@@ -188,7 +390,6 @@ RAW_STYLES = [
             "color change rgb 13 0.360000 0.340000 0.580000",
             "color change rgb 24 0.820000 0.830000 0.860000",
             "display projection Orthographic",
-            "display depthcue off",
             "material change ambient Glossy 0.100000",
             "material change specular Glossy 0.060000",
             "material change diffuse Glossy 0.920000",
@@ -196,116 +397,25 @@ RAW_STYLES = [
             "material change mirror Glossy 0.000000",
             "material change opacity Glossy 1.000000",
         ],
-        "sources": ["user-upload:param-pack"],
-        "notes": "Imported from Modern_cool palette.txt",
-    },
-    {
-        "id": "edgyglass_tuned_443",
-        "name": "EdgyGlass Tuned Opacity",
-        "image": "05_edgyglass_tuned_opacity.jpg",
-        "material": "EdgyGlass",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "display projection Orthographic",
-            "material change outline EdgyGlass 0.590000",
-            "material change outlinewidth EdgyGlass 0.340000",
-            "material change opacity EdgyGlass 0.730000",
-            "material change shininess EdgyGlass 0.800000",
-            "material change diffuse EdgyGlass 0.800000",
-            "material change specular EdgyGlass 0.250000",
-        ],
-        "sources": ["http://sobereva.com/443"],
-        "notes": "Reduced glare for crowded surfaces.",
-    },
-    {
-        "id": "goodsell_58009",
-        "name": "Goodsell Pastel",
-        "image": "13_bbs_goodsell_example.jpg",
-        "material": "Goodsell",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 off",
-            "light 2 on",
-            "light 3 off",
-            "material change ambient Goodsell 0.650000",
-            "material change diffuse Goodsell 1.000000",
-            "material change specular Goodsell 0.100000",
-            "material change shininess Goodsell 1.000000",
-            "material change mirror Goodsell 0.000000",
-            "material change opacity Goodsell 0.700000",
-            "material change outline Goodsell 3.300000",
-            "material change outlinewidth Goodsell 0.600000",
-        ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Soft palette style shared in forum.",
-    },
-    {
-        "id": "edgy_58009",
-        "name": "Edgy Contrast",
-        "image": "14_bbs_edgy_example1.jpg",
-        "material": "Edgy",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 off",
-            "light 3 on",
-            "material change ambient Edgy 0.400000",
-            "material change diffuse Edgy 0.880000",
-            "material change specular Edgy 0.000000",
-            "material change shininess Edgy 0.750000",
-            "material change mirror Edgy 0.000000",
-            "material change opacity Edgy 1.000000",
-            "material change outline Edgy 1.500000",
-            "material change outlinewidth Edgy 0.800000",
-        ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Edgy material and three-lights setup from forum share.",
-    },
-    {
-        "id": "translucent_clean_447",
-        "name": "Translucent Clean",
-        "image": "10_tachyon_mediumshade_vmd.jpg",
-        "material": "Translucent",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 on",
-        ],
-        "sources": ["http://sobereva.com/447", "http://sobereva.com/483"],
-        "notes": "Transparent look for cleaner overlap visibility.",
-    },
-    {
-        "id": "rdg_clarity_291",
-        "name": "RDG Clarity",
-        "image": "12_rdg_light3_on.png",
-        "material": "Glossy",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 on",
-        ],
-        "sources": ["http://sobereva.com/291"],
-        "notes": "Depthcue off with brighter lights for analysis snapshots.",
+        "sources": ["user-upload:Modern_cool palette.txt"],
+        "notes": "用户参数包的低高光紫灰冷色方案。",
     },
 ]
 
 
 def _style_signature(style: dict) -> tuple:
     return (
+        str(style.get("surface_mode", "signed")),
         style["material"],
         int(style["pos_color"]),
         int(style["neg_color"]),
+        int(style.get("surface_draw", 0)),
+        int(style.get("surface_boundary", 0)),
+        int(style.get("surface_step", 1)),
+        int(style.get("surface_size", 1)),
+        str(style.get("color_scale_method", "")),
+        float(style.get("color_scale_min", 0.0)),
+        float(style.get("color_scale_max", 0.0)),
         tuple(style["commands"]),
     )
 
@@ -324,18 +434,20 @@ def dedupe_styles(raw_styles: list[dict]) -> tuple[list[dict], list[dict]]:
             if not (STYLE_DIR / base["image"]).exists() and (STYLE_DIR / style["image"]).exists():
                 base["image"] = style["image"]
             continue
-        style["alias_ids"] = []
+        style["alias_ids"] = list(dict.fromkeys(style.get("alias_ids", [])))
         merged[key] = style
     return list(merged.values()), duplicates
 
 
 STYLES, DUPLICATES = dedupe_styles(RAW_STYLES)
 STYLE_BY_ID = {style["id"]: style for style in STYLES}
+DEFAULT_STYLE_ID = "density_d1_green_blue_glossy"
 
 SKELETON_STYLES = [
     {
         "id": "skeleton_default_opaque",
-        "name": "Skeleton Default Opaque",
+        "code": "K1",
+        "name": "K1 Skeleton · Standard CPK",
         "image": "18_sob449_1.jpg",
         "pre_commands": [],
         "rep0_commands": [
@@ -344,11 +456,40 @@ SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "Baseline CPK+Opaque skeleton style.",
+        "notes": "Multiwfn show scripts 的标准 CPK 0.8/0.3/22/22 + Name + Opaque。",
+    },
+    {
+        "id": "skeleton_slim_cpk",
+        "code": "K2",
+        "name": "K2 Skeleton · Slim CPK",
+        "image": "18_sob449_1.jpg",
+        "pre_commands": [],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.700000 0.300000 18.000000 16.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
+        ],
+        "sources": ["Multiwfn examples/IRIfill.vmd"],
+        "notes": "Multiwfn IRI 示例采用的较细 CPK 分辨率与球棍比例。",
+    },
+    {
+        "id": "skeleton_licorice",
+        "code": "K3",
+        "name": "K3 Skeleton · Licorice",
+        "image": "18_sob449_1.jpg",
+        "pre_commands": [],
+        "rep0_commands": [
+            "mol modstyle 0 top Licorice 0.200000 12.000000 12.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
+        ],
+        "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node62.html"],
+        "notes": "VMD Licorice 细棒骨架，键半径 0.2、球/棒分辨率 12。",
     },
     {
         "id": "skeleton_tan_opaque_449",
-        "name": "Skeleton Tan Opaque",
+        "code": "K4",
+        "name": "K4 Skeleton · Tan Outlined",
         "image": "19_sob449_2.jpg",
         "pre_commands": [
             "color Name C tan",
@@ -366,8 +507,23 @@ SKELETON_STYLES = [
         "notes": "Soft tan carbon color with stronger Opaque outline.",
     },
     {
+        "id": "skeleton_monochrome_silver",
+        "code": "K5",
+        "name": "K5 Skeleton · Monochrome Silver",
+        "image": "19_sob449_2.jpg",
+        "pre_commands": [],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top ColorID 6",
+            "mol modmaterial 0 top Opaque",
+        ],
+        "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node55.html"],
+        "notes": "统一 Silver（ColorID 6）的中性骨架，减少与等值面配色竞争。",
+    },
+    {
         "id": "skeleton_goodsell_58009",
-        "name": "Skeleton Goodsell",
+        "code": "K6",
+        "name": "K6 Skeleton · Goodsell",
         "image": "13_bbs_goodsell_example.jpg",
         "pre_commands": [
             "material change ambient Goodsell 0.650000",
@@ -389,7 +545,8 @@ SKELETON_STYLES = [
     },
     {
         "id": "skeleton_edgy_58009",
-        "name": "Skeleton Edgy",
+        "code": "K7",
+        "name": "K7 Skeleton · Edgy",
         "image": "14_bbs_edgy_example1.jpg",
         "pre_commands": [
             "material change ambient Edgy 0.400000",
@@ -503,6 +660,7 @@ MATERIAL_PARAMETER_NAMES = (
     "opacity",
     "outline",
     "outlinewidth",
+    "transmode",
 )
 
 
@@ -632,6 +790,15 @@ def extract_style_visual_parameters(
         "description": str(style.get("notes") or ""),
         "is_custom": bool(style.get("is_custom")),
         "material": material,
+        "surface_mode": str(style.get("surface_mode") or "signed"),
+        "surface_draw": int(style.get("surface_draw", 0)),
+        "surface_boundary": int(style.get("surface_boundary", 0)),
+        "surface_step": int(style.get("surface_step", 1)),
+        "surface_size": int(style.get("surface_size", 1)),
+        "default_iso_value": float(style.get("default_iso_value", 0.05)),
+        "color_scale_method": str(style.get("color_scale_method") or "BWR"),
+        "color_scale_min": float(style.get("color_scale_min", -0.03)),
+        "color_scale_max": float(style.get("color_scale_max", 0.03)),
         "pos_color_id": pos_id,
         "neg_color_id": neg_id,
         "positive_rgb": _known_color_rgb(pos_token, rgb_changes),
@@ -842,7 +1009,7 @@ def compose_combo_style(skeleton_style: dict, iso_style: dict) -> dict:
     combo_commands = _dedupe_commands(
         BASE_VIEW + skeleton_style.get("pre_commands", []) + iso_style.get("commands", [])
     )
-    return {
+    combo = {
         "id": f"combo_{skeleton_style['id']}__{iso_style['id']}",
         "name": f"{skeleton_style['name']} + {iso_style['name']}",
         "image": iso_style["image"],
@@ -858,6 +1025,23 @@ def compose_combo_style(skeleton_style: dict, iso_style: dict) -> dict:
         "bundle_id": iso_style["id"],
         "skeleton_id": skeleton_style["id"],
     }
+    for key in (
+        "code",
+        "surface_mode",
+        "surface_draw",
+        "surface_boundary",
+        "surface_step",
+        "surface_size",
+        "default_iso_value",
+        "color_scale_method",
+        "color_scale_min",
+        "color_scale_max",
+        "pos_color_expr",
+        "neg_color_expr",
+    ):
+        if key in iso_style:
+            combo[key] = iso_style[key]
+    return combo
 
 
 def _clamp_number(value, default: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -1110,6 +1294,7 @@ def build_custom_style_from_ai_guess(
         "neg_color": neg_id,
         "pos_color_expr": f"ColorID {pos_id}",
         "neg_color_expr": f"ColorID {neg_id}",
+        "surface_mode": "signed",
         "commands": commands,
         "sources": [f"ai-image-recognition:{provider or 'unknown'}"],
         "notes": notes,
@@ -1284,6 +1469,15 @@ def build_custom_style_from_visual_parameters(
         "neg_color": neg_id,
         "pos_color_expr": f"ColorID {pos_id}",
         "neg_color_expr": f"ColorID {neg_id}",
+        "surface_mode": str(parameters.get("surface_mode") or base_style.get("surface_mode") or "signed"),
+        "surface_draw": int(parameters.get("surface_draw", base_style.get("surface_draw", 0))),
+        "surface_boundary": int(parameters.get("surface_boundary", base_style.get("surface_boundary", 0))),
+        "surface_step": int(parameters.get("surface_step", base_style.get("surface_step", 1))),
+        "surface_size": int(parameters.get("surface_size", base_style.get("surface_size", 1))),
+        "default_iso_value": float(parameters.get("default_iso_value", base_style.get("default_iso_value", 0.05))),
+        "color_scale_method": str(parameters.get("color_scale_method") or base_style.get("color_scale_method") or "BWR"),
+        "color_scale_min": float(parameters.get("color_scale_min", base_style.get("color_scale_min", -0.03))),
+        "color_scale_max": float(parameters.get("color_scale_max", base_style.get("color_scale_max", 0.03))),
         "commands": _dedupe_commands(commands),
         "sources": sources,
         "notes": (description or "").strip(),
@@ -1898,9 +2092,9 @@ def load_config() -> dict:
         "output_dir": str(ROOT),
         "mode": "bundle",
         "theme": "light",
-        "last_style": STYLES[0]["id"] if STYLES else "",
+        "last_style": DEFAULT_STYLE_ID if DEFAULT_STYLE_ID in STYLE_BY_ID else (STYLES[0]["id"] if STYLES else ""),
         "last_skeleton": SKELETON_STYLES[0]["id"] if SKELETON_STYLES else "",
-        "last_iso_style": STYLES[0]["id"] if STYLES else "",
+        "last_iso_style": DEFAULT_STYLE_ID if DEFAULT_STYLE_ID in STYLE_BY_ID else (STYLES[0]["id"] if STYLES else ""),
         "batch_output_dir": str(ROOT / "batch_runs"),
         "batch_last_preset": "builtin_export_xyz",
     }
@@ -1985,6 +2179,209 @@ def _escape_batch_value(value: str) -> str:
     return value.replace("^", "^^").replace("%", "%%")
 
 
+_DENSITY_CUBE_TOKEN = re.compile(r"(?:^|[_\-.])(density|dens|rho)(?:[_\-.]|\d|$)", re.IGNORECASE)
+_ESP_CUBE_TOKEN = re.compile(
+    r"(?:^|[_\-.])(totesp|esp|mep|potential|electrostatic)(?:[_\-.]|\d|$)",
+    re.IGNORECASE,
+)
+
+
+def cube_semantic_role(path: Path | str) -> str:
+    """Classify a cube filename for the two-volume ESP drawing contract."""
+    stem = Path(path).stem
+    if _ESP_CUBE_TOKEN.search(stem):
+        return "esp"
+    if _DENSITY_CUBE_TOKEN.search(stem):
+        return "density"
+    return "unknown"
+
+
+def find_esp_cube_pair(
+    selected: Path | str,
+    candidates: list[Path] | tuple[Path, ...] | None = None,
+) -> tuple[Path, Path] | None:
+    """Return ``(density_cube, esp_cube)`` using conservative filename roles.
+
+    Multiwfn's documented ESP workflow writes pairs such as ``density1.cub``
+    and ``ESP1.cub``.  Unknown cube files are never silently treated as ESP,
+    because mapping the wrong scalar field would produce a plausible but
+    scientifically invalid picture.
+    """
+    chosen = Path(selected).expanduser().resolve()
+    if candidates is None:
+        try:
+            pool = [
+                path.resolve()
+                for path in chosen.parent.iterdir()
+                if path.is_file() and path.suffix.lower() in {".cub", ".cube"}
+            ]
+        except OSError:
+            pool = [chosen]
+    else:
+        pool = []
+        for raw in candidates:
+            path = Path(raw).expanduser()
+            if path.suffix.lower() not in {".cub", ".cube"}:
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved not in pool:
+                pool.append(resolved)
+    if chosen not in pool:
+        pool.append(chosen)
+
+    def newest(paths: list[Path]) -> Path | None:
+        if not paths:
+            return None
+        return max(
+            paths,
+            key=lambda path: (
+                path.stat().st_mtime_ns if path.exists() else 0,
+                path.name.lower(),
+            ),
+        )
+
+    densities = [path for path in pool if cube_semantic_role(path) == "density"]
+    potentials = [path for path in pool if cube_semantic_role(path) == "esp"]
+    role = cube_semantic_role(chosen)
+    suffix_match = re.search(r"(\d+)$", chosen.stem)
+    suffix = suffix_match.group(1) if suffix_match else ""
+
+    def matching_suffix(paths: list[Path]) -> list[Path]:
+        matched: list[Path] = []
+        for path in paths:
+            match = re.search(r"(\d+)$", path.stem)
+            path_suffix = match.group(1) if match else ""
+            if path_suffix == suffix:
+                matched.append(path)
+        return matched
+
+    if role == "density":
+        density = chosen
+        potential = newest(matching_suffix(potentials))
+        if potential is None and len(potentials) == 1:
+            potential = potentials[0]
+    elif role == "esp":
+        potential = chosen
+        density = newest(matching_suffix(densities))
+        if density is None and len(densities) == 1:
+            density = densities[0]
+    else:
+        density = chosen
+        potential = potentials[0] if len(potentials) == 1 else None
+    if density is None or potential is None or density == potential:
+        return None
+    return density, potential
+
+
+def cube_grid_signature(path: Path | str) -> tuple[int, tuple[float, ...]]:
+    """Read the atom count, origin, dimensions, and axes from a Cube header."""
+    cube = Path(path)
+    try:
+        with cube.open("r", encoding="utf-8", errors="replace") as handle:
+            header = [next(handle) for _ in range(6)]
+    except (OSError, StopIteration) as exc:
+        raise ValueError(f"无法读取 Cube 网格头：{cube}") from exc
+
+    try:
+        atom_origin = header[2].split()
+        atom_count = abs(int(atom_origin[0]))
+        values: list[float] = [float(value) for value in atom_origin[1:4]]
+        dimensions: list[int] = []
+        for axis_line in header[3:6]:
+            parts = axis_line.split()
+            dimensions.append(abs(int(parts[0])))
+            values.extend(float(value) for value in parts[1:4])
+    except (IndexError, TypeError, ValueError) as exc:
+        raise ValueError(f"Cube 网格头格式无效：{cube}") from exc
+    return atom_count, tuple(float(value) for value in dimensions + values)
+
+
+def cube_grids_compatible(
+    first: Path | str,
+    second: Path | str,
+    tolerance: float = 1.0e-7,
+) -> bool:
+    first_atoms, first_grid = cube_grid_signature(first)
+    second_atoms, second_grid = cube_grid_signature(second)
+    if first_atoms != second_atoms or len(first_grid) != len(second_grid):
+        return False
+    first_dims = tuple(int(value) for value in first_grid[:3])
+    second_dims = tuple(int(value) for value in second_grid[:3])
+    first_origin = first_grid[3:6]
+    second_origin = second_grid[3:6]
+    first_axes = [first_grid[index:index + 3] for index in (6, 9, 12)]
+    second_axes = [second_grid[index:index + 3] for index in (6, 9, 12)]
+
+    def norm(vector: tuple[float, ...]) -> float:
+        return math.sqrt(sum(value * value for value in vector))
+
+    for first_axis, second_axis in zip(first_axes, second_axes):
+        first_step, second_step = norm(first_axis), norm(second_axis)
+        if first_step <= tolerance or second_step <= tolerance:
+            return False
+        first_direction = tuple(value / first_step for value in first_axis)
+        second_direction = tuple(value / second_step for value in second_axis)
+        if not all(
+            math.isclose(left, right, rel_tol=1.0e-6, abs_tol=1.0e-6)
+            for left, right in zip(first_direction, second_direction)
+        ):
+            return False
+
+    max_step = max(norm(axis) for axis in first_axes + second_axes)
+    spatial_tolerance = max(tolerance, 0.51 * max_step)
+    if norm(tuple(left - right for left, right in zip(first_origin, second_origin))) > spatial_tolerance:
+        return False
+    for axis_index, (first_axis, second_axis) in enumerate(zip(first_axes, second_axes)):
+        first_end = tuple(
+            first_origin[index] + (first_dims[axis_index] - 1) * first_axis[index]
+            for index in range(3)
+        )
+        second_end = tuple(
+            second_origin[index] + (second_dims[axis_index] - 1) * second_axis[index]
+            for index in range(3)
+        )
+        if norm(tuple(left - right for left, right in zip(first_end, second_end))) > spatial_tolerance:
+            return False
+    return True
+
+
+def _turbo_rgb(position: float) -> tuple[float, float, float]:
+    """Google Turbo polynomial approximation, clamped for VMD RGB colors."""
+    x = max(0.0, min(1.0, float(position)))
+    x2, x3 = x * x, x * x * x
+    x4, x5 = x2 * x2, x2 * x3
+    rgb = (
+        0.13572138 + 4.61539260 * x - 42.66032258 * x2 + 132.13108234 * x3 - 152.94239396 * x4 + 59.28637943 * x5,
+        0.09140261 + 2.19418839 * x + 4.84296658 * x2 - 14.18503333 * x3 + 4.27729857 * x4 + 2.82956604 * x5,
+        0.10667330 + 12.64194608 * x - 60.58204836 * x2 + 110.36276771 * x3 - 89.90310912 * x4 + 27.34824973 * x5,
+    )
+    return tuple(max(0.0, min(1.0, value)) for value in rgb)  # type: ignore[return-value]
+
+
+def _turbo_vmd_commands() -> list[str]:
+    # VMD 1.9.3 has 33 regular colors (0..32), followed by 1024
+    # color-scale slots (33..1056).
+    # Calculate the polynomial in Tcl so exported CMD files stay well below
+    # cmd.exe's compound-command length limit.
+    return [
+        "color scale method RGB",
+        "for {set AUTO_TURBO_I 0} {$AUTO_TURBO_I < 1024} {incr AUTO_TURBO_I} {",
+        "    set AUTO_TURBO_X [expr {double($AUTO_TURBO_I) / 1023.0}]",
+        "    set AUTO_TURBO_X2 [expr {$AUTO_TURBO_X * $AUTO_TURBO_X}]",
+        "    set AUTO_TURBO_X3 [expr {$AUTO_TURBO_X2 * $AUTO_TURBO_X}]",
+        "    set AUTO_TURBO_X4 [expr {$AUTO_TURBO_X2 * $AUTO_TURBO_X2}]",
+        "    set AUTO_TURBO_X5 [expr {$AUTO_TURBO_X2 * $AUTO_TURBO_X3}]",
+        "    set AUTO_TURBO_R [expr {min(1.0, max(0.0, 0.13572138 + 4.61539260*$AUTO_TURBO_X - 42.66032258*$AUTO_TURBO_X2 + 132.13108234*$AUTO_TURBO_X3 - 152.94239396*$AUTO_TURBO_X4 + 59.28637943*$AUTO_TURBO_X5))}]",
+        "    set AUTO_TURBO_G [expr {min(1.0, max(0.0, 0.09140261 + 2.19418839*$AUTO_TURBO_X + 4.84296658*$AUTO_TURBO_X2 - 14.18503333*$AUTO_TURBO_X3 + 4.27729857*$AUTO_TURBO_X4 + 2.82956604*$AUTO_TURBO_X5))}]",
+        "    set AUTO_TURBO_B [expr {min(1.0, max(0.0, 0.10667330 + 12.64194608*$AUTO_TURBO_X - 60.58204836*$AUTO_TURBO_X2 + 110.36276771*$AUTO_TURBO_X3 - 89.90310912*$AUTO_TURBO_X4 + 27.34824973*$AUTO_TURBO_X5))}]",
+        "    color change rgb [expr {33 + $AUTO_TURBO_I}] $AUTO_TURBO_R $AUTO_TURBO_G $AUTO_TURBO_B",
+        "}",
+    ]
+
+
 def build_vmd_tcl(
     style: dict, rep0_commands: list[str] | None = None
 ) -> str:
@@ -2004,12 +2401,31 @@ def build_vmd_tcl(
     pos_color_expr = pos_candidate if _is_safe_tcl_fragment(pos_candidate) else pos_default
     neg_color_expr = neg_candidate if _is_safe_tcl_fragment(neg_candidate) else neg_default
     material = _safe_tcl_token(style.get("material"), "Glossy")
+    surface_mode = str(style.get("surface_mode") or "signed")
+    if surface_mode not in {"signed", "volume_mapped"}:
+        surface_mode = "signed"
+    surface_draw = max(0, min(3, int(style.get("surface_draw", 0))))
+    surface_boundary = max(0, min(3, int(style.get("surface_boundary", 0))))
+    surface_step = max(1, min(20, int(style.get("surface_step", 1))))
+    surface_size = max(1, min(20, int(style.get("surface_size", 1))))
+    requested_scale_method = _safe_tcl_token(style.get("color_scale_method"), "BWR")
+    valid_scale_methods = {
+        name.lower(): name
+        for name in ("RGB", "BGR", "RWB", "BWR", "RWG", "GWR", "GWB", "BWG", "BlkW", "WBlk", "Turbo")
+    }
+    color_scale_method = valid_scale_methods.get(requested_scale_method.lower(), "BWR")
+    color_scale_min = float(style.get("color_scale_min", -0.03))
+    color_scale_max = float(style.get("color_scale_max", 0.03))
+    if not math.isfinite(color_scale_min) or not math.isfinite(color_scale_max) or color_scale_min >= color_scale_max:
+        color_scale_min, color_scale_max = -0.03, 0.03
     style_commands = _sanitize_vmd_commands(style.get("commands", []))
 
     lines: list[str] = []
     a = lines.append
-    a("# Auto-generated single-file AutoCube workflow")
+    a("# Auto-generated AutoCube isosurface workflow")
     a("set AUTO_CUBE_FILE [file normalize $::env(CUBE_FILE)]")
+    if surface_mode == "volume_mapped":
+        a("set AUTO_COLOR_CUBE_FILE [file normalize $::env(COLOR_CUBE_FILE)]")
     a("set AUTO_ISOVAL [expr {abs(double($::env(ISO_NORM)))}]")
     a("set AUTO_OUTDIR [file normalize $::env(A_DIR)]")
     a("set AUTO_BASENAME [file rootname [file tail $AUTO_CUBE_FILE]]")
@@ -2087,23 +2503,48 @@ def build_vmd_tcl(
         source_text = str(source).replace("\r", " ").replace("\n", " ")
         a(f"# Source: {source_text}")
     a(f"set mater {material}")
-    lines.extend(style_commands)
+    if surface_mode == "volume_mapped":
+        if color_scale_method.lower() == "turbo":
+            lines.extend(_turbo_vmd_commands())
+        else:
+            a(f"color scale method {color_scale_method}")
+        # The structured field above is authoritative for mapped ESP styles.
+        lines.extend(
+            command
+            for command in style_commands
+            if not command.lower().startswith("color scale method ")
+        )
+    else:
+        lines.extend(style_commands)
     a("")
     a("foreach i [molinfo list] {")
     a("    mol delete $i")
     a("}")
     a("")
     a("mol new $AUTO_CUBE_FILE type cube waitfor all")
+    if surface_mode == "volume_mapped":
+        a("mol addfile $AUTO_COLOR_CUBE_FILE type cube waitfor all")
     lines.extend(rep0_commands)
     a("mol addrep top")
-    a("mol modstyle 1 top Isosurface $AUTO_ISOVAL 0 0 0 1 1")
-    a(f"mol modcolor 1 top {pos_color_expr}")
+    a(
+        f"mol modstyle 1 top Isosurface $AUTO_ISOVAL 0 {surface_boundary} "
+        f"{surface_draw} {surface_step} {surface_size}"
+    )
+    if surface_mode == "volume_mapped":
+        a("mol modcolor 1 top Volume 1")
+        a(f"mol scaleminmax top 1 {color_scale_min:.12g} {color_scale_max:.12g}")
+    else:
+        a(f"mol modcolor 1 top {pos_color_expr}")
     a("mol modmaterial 1 top $mater")
-    a("mol addrep top")
-    a("set negiso [expr {-$AUTO_ISOVAL}]")
-    a("mol modstyle 2 top Isosurface $negiso 0 0 0 1 1")
-    a(f"mol modcolor 2 top {neg_color_expr}")
-    a("mol modmaterial 2 top $mater")
+    if surface_mode == "signed":
+        a("mol addrep top")
+        a("set negiso [expr {-$AUTO_ISOVAL}]")
+        a(
+            f"mol modstyle 2 top Isosurface $negiso 0 {surface_boundary} "
+            f"{surface_draw} {surface_step} {surface_size}"
+        )
+        a(f"mol modcolor 2 top {neg_color_expr}")
+        a("mol modmaterial 2 top $mater")
     a("display distance -8.0")
     a("display height 10")
     a("")
@@ -2122,6 +2563,11 @@ def build_cmd_script(
 ) -> str:
     multiwfn_exe = _clean_executable_path(multiwfn_exe, "Multiwfn")
     vmd_exe = _clean_executable_path(vmd_exe, "VMD")
+    surface_mode = str(style.get("surface_mode") or "signed")
+    is_volume_mapped = surface_mode == "volume_mapped"
+    default_iso_value = float(style.get("default_iso_value", 0.05))
+    if not math.isfinite(default_iso_value) or default_iso_value <= 0:
+        default_iso_value = 0.001 if is_volume_mapped else 0.05
 
     lines: list[str] = []
     a = lines.append
@@ -2162,7 +2608,10 @@ def build_cmd_script(
     a('echo [INFO] Multiwfnpath: "%Multiwfnpath%"')
     a("echo.")
     a("echo [INFO] Launching Multiwfn...")
-    a("echo [INFO] Generate ONE .cub file in this A folder, then exit Multiwfn.")
+    if is_volume_mapped:
+        a("echo [INFO] Generate a matched density*.cub and ESP*.cub pair in this A folder, then exit Multiwfn.")
+    else:
+        a("echo [INFO] Generate ONE .cub file in this A folder, then exit Multiwfn.")
     a('set "RUN_MARKER=%TEMP%\\autocube_marker_%RANDOM%%RANDOM%%RANDOM%.tmp"')
     a('type nul > "%RUN_MARKER%"')
     a("start \"\" /wait \"%MULTIWFN_EXE%\"")
@@ -2170,24 +2619,44 @@ def build_cmd_script(
     a("set \"CUBE_FILE=\"")
     # Avoid PowerShell pipelines here: cmd.exe parses a FOR /F backquoted command
     # once more, which can either expose an unescaped pipe to cmd or pass a literal
-    # caret through to PowerShell.  A small loop is unambiguous in both parsers.
-    a('for /f "usebackq delims=" %%F in (`powershell -NoLogo -NoProfile -Command "$marker=(Get-Item -LiteralPath $env:RUN_MARKER).LastWriteTimeUtc; $latest=$null; $latestStamp=[datetime]::MinValue; foreach ($file in Get-ChildItem -LiteralPath $env:A_DIR -Filter \'*.cub\' -File) { if ($file.LastWriteTimeUtc -ge $marker -and $file.LastWriteTimeUtc -gt $latestStamp) { $latest=$file.FullName; $latestStamp=$file.LastWriteTimeUtc } }; if ($null -ne $latest) { $latest }"`) do set "CUBE_FILE=%%F"')
+    # caret through to PowerShell.  Small loops are unambiguous in both parsers.
+    if is_volume_mapped:
+        a("set \"COLOR_CUBE_FILE=\"")
+        density_pattern = r"(?i)(^|[_\-.])(density|dens|rho)([_\-.]|\d|$)"
+        esp_pattern = r"(?i)(^|[_\-.])(totesp|esp|mep|potential|electrostatic)([_\-.]|\d|$)"
+        a(f'for /f "usebackq delims=" %%F in (`powershell -NoLogo -NoProfile -Command "$marker=(Get-Item -LiteralPath $env:RUN_MARKER).LastWriteTimeUtc; $latest=$null; $latestStamp=[datetime]::MinValue; foreach ($file in Get-ChildItem -LiteralPath $env:A_DIR -Filter \'*.cub\' -File) {{ if ($file.LastWriteTimeUtc -ge $marker -and $file.BaseName -match \'{density_pattern}\' -and $file.LastWriteTimeUtc -gt $latestStamp) {{ $latest=$file.FullName; $latestStamp=$file.LastWriteTimeUtc }} }}; if ($null -ne $latest) {{ $latest }}"`) do set "CUBE_FILE=%%F"')
+        a(f'for /f "usebackq delims=" %%F in (`powershell -NoLogo -NoProfile -Command "$marker=(Get-Item -LiteralPath $env:RUN_MARKER).LastWriteTimeUtc; $latest=$null; $latestStamp=[datetime]::MinValue; foreach ($file in Get-ChildItem -LiteralPath $env:A_DIR -Filter \'*.cub\' -File) {{ if ($file.LastWriteTimeUtc -ge $marker -and $file.BaseName -match \'{esp_pattern}\' -and $file.LastWriteTimeUtc -gt $latestStamp) {{ $latest=$file.FullName; $latestStamp=$file.LastWriteTimeUtc }} }}; if ($null -ne $latest) {{ $latest }}"`) do set "COLOR_CUBE_FILE=%%F"')
+    else:
+        a('for /f "usebackq delims=" %%F in (`powershell -NoLogo -NoProfile -Command "$marker=(Get-Item -LiteralPath $env:RUN_MARKER).LastWriteTimeUtc; $latest=$null; $latestStamp=[datetime]::MinValue; foreach ($file in Get-ChildItem -LiteralPath $env:A_DIR -Filter \'*.cub\' -File) { if ($file.LastWriteTimeUtc -ge $marker -and $file.LastWriteTimeUtc -gt $latestStamp) { $latest=$file.FullName; $latestStamp=$file.LastWriteTimeUtc } }; if ($null -ne $latest) { $latest }"`) do set "CUBE_FILE=%%F"')
     a('del /q "%RUN_MARKER%" >nul 2>nul')
     a("")
     a("if not defined CUBE_FILE (")
-    a('  echo [ERROR] No new or updated .cub file was found in: "%A_DIR%"')
+    if is_volume_mapped:
+        a('  echo [ERROR] No new density*.cub file was found in: "%A_DIR%"')
+    else:
+        a('  echo [ERROR] No new or updated .cub file was found in: "%A_DIR%"')
     a("  pause")
     a("  exit /b 1")
     a(")")
+    if is_volume_mapped:
+        a("")
+        a("if not defined COLOR_CUBE_FILE (")
+        a('  echo [ERROR] No new ESP*.cub file was found in: "%A_DIR%"')
+        a("  echo [INFO] The ESP style requires matched density and electrostatic-potential cubes.")
+        a("  pause")
+        a("  exit /b 1")
+        a(")")
     a("")
     a("for %%B in (\"%CUBE_FILE%\") do set \"CUBE_BASE=%%~nB\"")
     a('echo [INFO] Using cube file: "%CUBE_FILE%"')
+    if is_volume_mapped:
+        a('echo [INFO] Using ESP color cube: "%COLOR_CUBE_FILE%"')
     a("")
     a(":ask_iso")
     a("set \"ISO_RAW=\"")
     a("set \"ISO_NORM=\"")
-    a("set /p ISO_RAW=Enter isovalue (positive number, e.g. 0.05): ")
-    a("if not defined ISO_RAW goto ask_iso")
+    a(f"set /p ISO_RAW=Enter isovalue (press Enter for {default_iso_value:.12g}): ")
+    a(f'if not defined ISO_RAW set "ISO_RAW={default_iso_value:.12g}"')
     a("")
     a("for /f \"usebackq delims=\" %%I in (`powershell -NoLogo -NoProfile -Command \"$v=0.0; $raw=$env:ISO_RAW; $ok=[double]::TryParse($raw,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$v); if(-not $ok){$ok=[double]::TryParse($raw,[ref]$v)}; if($ok){$v=[Math]::Abs($v); if($v -gt 0){$v.ToString('0.############',[Globalization.CultureInfo]::InvariantCulture)}}\"`) do set \"ISO_NORM=%%I\"")
     a("")
@@ -2211,16 +2680,17 @@ def build_cmd_script(
             .replace(")", "^)")
         )
 
-    def _echo_tcl(text: str) -> None:
+    def _echo_tcl(text: str, first: bool = False) -> None:
+        redirect = ">" if first else ">>"
         if text == "":
-            a("  echo.")
+            a(f'{redirect} "%TCL_FILE%" echo.')
             return
-        a(f"  echo {_escape_batch_echo(text)}")
+        a(f'{redirect} "%TCL_FILE%" echo {_escape_batch_echo(text)}')
 
-    a('> "%TCL_FILE%" (')
-    for tcl_line in build_vmd_tcl(style, rep0_commands=rep0_commands).splitlines():
-        _echo_tcl(tcl_line)
-    a(")")
+    for index, tcl_line in enumerate(
+        build_vmd_tcl(style, rep0_commands=rep0_commands).splitlines()
+    ):
+        _echo_tcl(tcl_line, first=index == 0)
     a('')
     a('if not exist "%TCL_FILE%" (')
     a('  echo [ERROR] Failed to generate temporary VMD Tcl script.')
@@ -2250,6 +2720,7 @@ def build_cmd_script(
 def style_payload(style: dict) -> dict:
     return {
         "id": style["id"],
+        "code": style.get("code", ""),
         "name": style["name"],
         "material": style["material"],
         "pos_color": style["pos_color"],
@@ -2262,12 +2733,22 @@ def style_payload(style: dict) -> dict:
         "notes": style.get("notes", ""),
         "aliases": style.get("alias_ids", []),
         "is_custom": bool(style.get("is_custom", False)),
+        "surface_mode": style.get("surface_mode", "signed"),
+        "surface_draw": int(style.get("surface_draw", 0)),
+        "surface_boundary": int(style.get("surface_boundary", 0)),
+        "surface_step": int(style.get("surface_step", 1)),
+        "surface_size": int(style.get("surface_size", 1)),
+        "default_iso_value": float(style.get("default_iso_value", 0.05)),
+        "color_scale_method": style.get("color_scale_method", ""),
+        "color_scale_min": style.get("color_scale_min"),
+        "color_scale_max": style.get("color_scale_max"),
     }
 
 
 def skeleton_payload(style: dict) -> dict:
     return {
         "id": style["id"],
+        "code": style.get("code", ""),
         "name": style["name"],
         "image": style["image"],
         "image_url": f"/img/{style['image']}",
@@ -2666,13 +3147,21 @@ function readFileAsDataURL(file) {
   });
 }
 
+function isoSubtitle(st) {
+  if (st.surface_mode === 'volume_mapped') {
+    const draw = Number(st.surface_draw || 0) === 1 ? 'Wireframe' : 'Solid Surface';
+    return `Material: ${st.material} | ESP ${st.color_scale_method || 'BWR'} ${st.color_scale_min}～${st.color_scale_max} a.u. | ${draw}`;
+  }
+  return `Material: ${st.material} | ${st.pos_color_expr || ('ColorID ' + st.pos_color)} / ${st.neg_color_expr || ('ColorID ' + st.neg_color)}`;
+}
+
 function renderAllCards() {
   renderCardList(
     'bundleStyles',
     state.bundleStyles,
     state.selectedBundle,
     (id) => { state.selectedBundle = id; renderAllCards(); syncOutputName(); },
-    (st) => `Material: ${st.material} | ${st.pos_color_expr || ('ColorID ' + st.pos_color)} / ${st.neg_color_expr || ('ColorID ' + st.neg_color)}`
+    (st) => isoSubtitle(st)
   );
   renderCardList(
     'skeletonStyles',
@@ -2686,7 +3175,7 @@ function renderAllCards() {
     state.isoStyles,
     state.selectedIso,
     (id) => { state.selectedIso = id; renderAllCards(); syncOutputName(); },
-    (st) => `Material: ${st.material} | ${st.pos_color_expr || ('ColorID ' + st.pos_color)} / ${st.neg_color_expr || ('ColorID ' + st.neg_color)}`
+    (st) => isoSubtitle(st)
   );
 }
 
