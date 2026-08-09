@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import tempfile
@@ -152,19 +153,90 @@ mol addrep top
         self.assertEqual(edited["material"], source["material"])
         self.assertIn("material change mirror Opaque 0.15", edited["commands"])
         self.assertIn("material change ambient Glossy 0.100000", edited["commands"])
-        self.assertEqual(source["code"], "D3")
+        self.assertEqual(source["name"], "Soft Artistic Glossy")
+        self.assertNotIn("code", source)
 
-    def test_selected_iso_and_skeleton_presets_are_unique_and_complete(self) -> None:
+    def test_legacy_presets_are_unchanged_and_new_presets_are_appended(self) -> None:
+        canonical = lambda value: json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
         self.assertEqual(
-            [style["code"] for style in core.STYLES],
-            ["E1", "E2", "E3", "E4", "E5", "E7", "D1", "D2", "D3", "D4", "D5", "D6", "D7"],
+            hashlib.sha256(canonical(core.ORIGINAL_SURFACE_STYLES)).hexdigest(),
+            "0b8a3162eeaecf45cca3a73e613fa29a126fb18e74d22dc054ef2fb7ddbf7a82",
         )
         self.assertEqual(
-            [style["code"] for style in core.SKELETON_STYLES],
-            ["K1", "K2", "K3", "K4", "K5", "K6", "K7"],
+            hashlib.sha256(canonical(core.ORIGINAL_SKELETON_STYLES)).hexdigest(),
+            "8cc70caa8a512f58983ce50b5740dd537ee90d36e698a7630079f6b73baa700c",
         )
-        self.assertEqual(core.DUPLICATES, [])
-        self.assertEqual(len({core._style_signature(style) for style in core.STYLES}), 13)
+        self.assertEqual(
+            [style["id"] for style in core.STYLES[:10]],
+            [
+                "classic_glossy_447",
+                "soft_glossy_449",
+                "edgyglass_overlap_483",
+                "bright_bule_yellow_userpack",
+                "modern_cool_palette_userpack",
+                "edgyglass_tuned_443",
+                "goodsell_58009",
+                "edgy_58009",
+                "translucent_clean_447",
+                "rdg_clarity_291",
+            ],
+        )
+        self.assertEqual(
+            [style["id"] for style in core.STYLES[10:]],
+            list(core._APPENDED_STYLE_IDS),
+        )
+        self.assertEqual(
+            [style["id"] for style in core.SKELETON_STYLES[:4]],
+            [
+                "skeleton_default_opaque",
+                "skeleton_tan_opaque_449",
+                "skeleton_goodsell_58009",
+                "skeleton_edgy_58009",
+            ],
+        )
+        self.assertEqual(
+            [style["id"] for style in core.SKELETON_STYLES[4:]],
+            list(core._NEW_SKELETON_IDS),
+        )
+        self.assertEqual(
+            core.DUPLICATES,
+            [{"removed": "classic_glossy_483", "kept": "classic_glossy_447"}],
+        )
+        self.assertEqual(
+            len({core._style_signature(style) for style in core.STYLES}),
+            len(core.STYLES),
+        )
+
+    def test_selected_codes_reuse_legacy_density_styles_without_duplicates(self) -> None:
+        self.assertEqual(
+            core.DENSITY_DIFFERENCE_STYLE_MAP,
+            {
+                "D1": "density_d1_green_blue_glossy",
+                "D2": "classic_glossy_447",
+                "D3": "soft_glossy_449",
+                "D4": "edgyglass_overlap_483",
+                "D5": "bright_bule_yellow_userpack",
+                "D6": "density_d6_green_orange_diffuse",
+                "D7": "modern_cool_palette_userpack",
+            },
+        )
+        self.assertEqual(
+            {
+                style["code"]: style["image"]
+                for style in core.NEW_SURFACE_STYLES
+                if str(style.get("code", "")).startswith("E")
+            },
+            {
+                "E1": "04_isosurface_iso_tachyon.png",
+                "E2": "02_color_mapped_transparent.jpg",
+                "E3": "05_edgyglass_tuned_opacity.jpg",
+                "E4": "06_turbo_colorscale_edgyglass.jpg",
+                "E5": "03_iso2_overlap_cube.png",
+                "E7": "esp_e7_wireframe_reference.png",
+            },
+        )
 
     def test_esp_style_maps_a_second_volume_to_one_density_isosurface(self) -> None:
         style = core.STYLE_BY_ID["esp_e1_bwr_glossy"]

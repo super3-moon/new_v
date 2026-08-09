@@ -80,6 +80,229 @@ BASE_VIEW = [
     "axes location Off",
 ]
 
+# Frozen baseline from 02f51ee.  These records are intentionally kept
+# byte-for-byte equivalent to the pre-ESP release: built-in IDs, names,
+# order, covers and drawing parameters are part of the user-facing contract.
+ORIGINAL_SURFACE_STYLES = [
+    {
+        "id": "classic_glossy_447",
+        "name": "Classic Glossy (Red/Blue)",
+        "image": "07_glossy_default.jpg",
+        "material": "Glossy",
+        "pos_color": 1,
+        "neg_color": 0,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 on",
+            "light 3 off",
+        ],
+        "sources": ["http://sobereva.com/447"],
+        "notes": "Default showorb-style dual-color glossy isosurface.",
+    },
+    {
+        "id": "classic_glossy_483",
+        "name": "Classic Glossy (showcub)",
+        "image": "01_dual_color_basic.png",
+        "material": "Glossy",
+        "pos_color": 1,
+        "neg_color": 0,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 on",
+            "light 3 off",
+        ],
+        "sources": ["http://sobereva.com/483"],
+        "notes": "Same visual core as showorb classic style.",
+    },
+    {
+        "id": "soft_glossy_449",
+        "name": "Soft Artistic Glossy",
+        "image": "08_vmdrender_soft_material.jpg",
+        "material": "Glossy",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "color Name C tan",
+            "color change rgb tan 0.700000 0.560000 0.360000",
+            "material change mirror Opaque 0.15",
+            "material change outline Opaque 4.000000",
+            "material change outlinewidth Opaque 0.5",
+            "material change ambient Glossy 0.1",
+            "material change diffuse Glossy 0.600000",
+            "material change opacity Glossy 0.75",
+            "material change shininess Glossy 1.0",
+            "light 3 on",
+        ],
+        "sources": ["http://sobereva.com/449"],
+        "notes": "Color and material tuning from VMDrender.txt logic.",
+    },
+    {
+        "id": "edgyglass_overlap_483",
+        "name": "Overlap Emphasis (EdgyGlass)",
+        "image": "03_iso2_overlap_cube.png",
+        "material": "EdgyGlass",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 on",
+            "light 3 on",
+        ],
+        "sources": ["http://sobereva.com/483"],
+        "notes": "Good for two-cube overlap readability.",
+    },
+    {
+        "id": "bright_bule_yellow_userpack",
+        "name": "Bright Blue + Yellow",
+        "image": "23_bright_blue_yellow.png",
+        "material": "Glossy",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "color Display Background silver",
+            "color change rgb silver 0.960000 0.960000 0.960000",
+            "color change rgb 12 0.030000 0.740000 0.830000",
+            "color change rgb 22 0.920000 0.770000 0.090000",
+            "display projection Orthographic",
+            "display depthcue off",
+            "axes location Off",
+            "material change ambient Glossy 0.100000",
+            "material change specular Glossy 0.080000",
+            "material change diffuse Glossy 0.920000",
+            "material change shininess Glossy 0.040000",
+            "material change opacity Glossy 1.000000",
+        ],
+        "sources": ["user-upload:param-pack"],
+        "notes": "Imported from Bright_Bule+Yellow.txt",
+    },
+    {
+        "id": "modern_cool_palette_userpack",
+        "name": "Modern Cool Palette",
+        "image": "24_modern_cool_palette.png",
+        "material": "Glossy",
+        "pos_color": 13,
+        "neg_color": 24,
+        "commands": BASE_VIEW + [
+            "color Display Background silver",
+            "color change rgb silver 0.965000 0.965000 0.965000",
+            "color change rgb 13 0.360000 0.340000 0.580000",
+            "color change rgb 24 0.820000 0.830000 0.860000",
+            "display projection Orthographic",
+            "display depthcue off",
+            "material change ambient Glossy 0.100000",
+            "material change specular Glossy 0.060000",
+            "material change diffuse Glossy 0.920000",
+            "material change shininess Glossy 0.030000",
+            "material change mirror Glossy 0.000000",
+            "material change opacity Glossy 1.000000",
+        ],
+        "sources": ["user-upload:param-pack"],
+        "notes": "Imported from Modern_cool palette.txt",
+    },
+    {
+        "id": "edgyglass_tuned_443",
+        "name": "EdgyGlass Tuned Opacity",
+        "image": "05_edgyglass_tuned_opacity.jpg",
+        "material": "EdgyGlass",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "display projection Orthographic",
+            "material change outline EdgyGlass 0.590000",
+            "material change outlinewidth EdgyGlass 0.340000",
+            "material change opacity EdgyGlass 0.730000",
+            "material change shininess EdgyGlass 0.800000",
+            "material change diffuse EdgyGlass 0.800000",
+            "material change specular EdgyGlass 0.250000",
+        ],
+        "sources": ["http://sobereva.com/443"],
+        "notes": "Reduced glare for crowded surfaces.",
+    },
+    {
+        "id": "goodsell_58009",
+        "name": "Goodsell Pastel",
+        "image": "13_bbs_goodsell_example.jpg",
+        "material": "Goodsell",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 off",
+            "light 2 on",
+            "light 3 off",
+            "material change ambient Goodsell 0.650000",
+            "material change diffuse Goodsell 1.000000",
+            "material change specular Goodsell 0.100000",
+            "material change shininess Goodsell 1.000000",
+            "material change mirror Goodsell 0.000000",
+            "material change opacity Goodsell 0.700000",
+            "material change outline Goodsell 3.300000",
+            "material change outlinewidth Goodsell 0.600000",
+        ],
+        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
+        "notes": "Soft palette style shared in forum.",
+    },
+    {
+        "id": "edgy_58009",
+        "name": "Edgy Contrast",
+        "image": "14_bbs_edgy_example1.jpg",
+        "material": "Edgy",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 off",
+            "light 3 on",
+            "material change ambient Edgy 0.400000",
+            "material change diffuse Edgy 0.880000",
+            "material change specular Edgy 0.000000",
+            "material change shininess Edgy 0.750000",
+            "material change mirror Edgy 0.000000",
+            "material change opacity Edgy 1.000000",
+            "material change outline Edgy 1.500000",
+            "material change outlinewidth Edgy 0.800000",
+        ],
+        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
+        "notes": "Edgy material and three-lights setup from forum share.",
+    },
+    {
+        "id": "translucent_clean_447",
+        "name": "Translucent Clean",
+        "image": "10_tachyon_mediumshade_vmd.jpg",
+        "material": "Translucent",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 on",
+            "light 3 on",
+        ],
+        "sources": ["http://sobereva.com/447", "http://sobereva.com/483"],
+        "notes": "Transparent look for cleaner overlap visibility.",
+    },
+    {
+        "id": "rdg_clarity_291",
+        "name": "RDG Clarity",
+        "image": "12_rdg_light3_on.png",
+        "material": "Glossy",
+        "pos_color": 12,
+        "neg_color": 22,
+        "commands": BASE_VIEW + [
+            "light 0 on",
+            "light 1 on",
+            "light 2 on",
+            "light 3 on",
+        ],
+        "sources": ["http://sobereva.com/291"],
+        "notes": "Depthcue off with brighter lights for analysis snapshots.",
+    },
+]
+
 GLOSSY_DEFAULT = [
     "material change ambient Glossy 0.000000",
     "material change diffuse Glossy 0.650000",
@@ -158,12 +381,12 @@ def _esp_style(**values: object) -> dict:
     return style
 
 
-RAW_STYLES = [
+_SELECTED_STYLE_RESEARCH_ENTRIES = [
     _esp_style(
         id="esp_e1_bwr_glossy",
         code="E1",
         name="E1 ESP · BWR Glossy",
-        image="25_esp_e1_bwr_glossy.png",
+        image="04_isosurface_iso_tachyon.png",
         material="Glossy",
         color_scale_method="BWR",
         color_scale_min=-0.03,
@@ -180,7 +403,7 @@ RAW_STYLES = [
         id="esp_e2_bwr_translucent",
         code="E2",
         name="E2 ESP · BWR Translucent",
-        image="26_esp_e2_bwr_translucent.png",
+        image="02_color_mapped_transparent.jpg",
         material="Translucent",
         color_scale_method="BWR",
         color_scale_min=-0.03,
@@ -188,7 +411,7 @@ RAW_STYLES = [
         commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + TRANSLUCENT_DEFAULT,
         sources=[
             "Multiwfn examples/drawESP/ESPiso.vmd",
-            "https://www.umsyar.com/443",
+            "https://www.umsyar.com/483",
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
         ],
         notes="与 E1 使用同一 ESP 映射和范围，仅改用 VMD 1.9.3 的 Translucent 材质参数。",
@@ -197,7 +420,7 @@ RAW_STYLES = [
         id="esp_e3_bwr_edgyglass_443",
         code="E3",
         name="E3 ESP · BWR EdgyGlass",
-        image="27_esp_e3_bwr_edgyglass.png",
+        image="05_edgyglass_tuned_opacity.jpg",
         material="EdgyGlass",
         color_scale_method="BWR",
         color_scale_min=-0.03,
@@ -220,7 +443,7 @@ RAW_STYLES = [
         id="esp_e4_turbo_edgyglass_443",
         code="E4",
         name="E4 ESP · Turbo EdgyGlass",
-        image="28_esp_e4_turbo_edgyglass.png",
+        image="06_turbo_colorscale_edgyglass.jpg",
         material="EdgyGlass",
         color_scale_method="Turbo",
         color_scale_min=-0.06,
@@ -241,7 +464,7 @@ RAW_STYLES = [
         id="esp_e5_bwr_diffuse",
         code="E5",
         name="E5 ESP · BWR Diffuse",
-        image="29_esp_e5_bwr_diffuse.png",
+        image="03_iso2_overlap_cube.png",
         material="Diffuse",
         color_scale_method="BWR",
         color_scale_min=-0.03,
@@ -249,6 +472,7 @@ RAW_STYLES = [
         commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + DIFFUSE_DEFAULT,
         sources=[
             "Multiwfn examples/drawESP/ESPiso.vmd",
+            "https://www.umsyar.com/483",
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
         ],
         notes="BWR 映射配 VMD 1.9.3 Diffuse 默认参数，形成无高光的哑光等值面。",
@@ -257,7 +481,7 @@ RAW_STYLES = [
         id="esp_e7_bwr_wireframe",
         code="E7",
         name="E7 ESP · BWR Wireframe",
-        image="30_esp_e7_bwr_wireframe.png",
+        image="esp_e7_wireframe_reference.png",
         material="Opaque",
         color_scale_method="BWR",
         color_scale_min=-0.03,
@@ -267,9 +491,11 @@ RAW_STYLES = [
         commands=BASE_VIEW + ["color scale method BWR"] + OPAQUE_DEFAULT,
         sources=[
             "Multiwfn examples/drawESP/ESPiso.vmd",
-            "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/30407.html",
+            "https://sassie-web.chem.utk.edu/sassie2/docs/analyze/density_plot/density_vmd_example_1/density_vmd_example_1.html",
+            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node77.html",
+            "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/29283.html",
         ],
-        notes="ESP 映射电子密度等值面，VMD Isosurface Draw=Wireframe，Step=3 形成可辨识网格（不是极值点或表面顶点）。",
+        notes="ESP 映射电子密度等值面，VMD Isosurface Draw=Wireframe，Step=3；封面来自明确标注为 VMD Wireframe Isosurface 的教程示例。",
     ),
     {
         "id": "density_d1_green_blue_glossy",
@@ -285,84 +511,6 @@ RAW_STYLES = [
         "notes": "电子密度差正值绿色、负值蓝色；两张 Solid Surface 等值面。",
     },
     {
-        "id": "density_d2_red_blue_glossy",
-        "code": "D2",
-        "name": "D2 Density Difference · Red/Blue Glossy",
-        "image": "07_glossy_default.jpg",
-        "surface_mode": "signed",
-        "material": "Glossy",
-        "pos_color": 1,
-        "neg_color": 0,
-        "commands": BASE_VIEW + ["light 3 on"] + GLOSSY_DEFAULT,
-        "sources": [
-            "Multiwfn examples/scripts/showorb.vmd",
-            "https://crystalexplorer.net/docs/manual/isosurfaces/other-surfaces/",
-        ],
-        "notes": "经典红/蓝正负电子密度差配色；参数与 Multiwfn showorb.vmd 一致。",
-    },
-    {
-        "id": "soft_glossy_449",
-        "code": "D3",
-        "name": "D3 Density Difference · Soft Lime/Cyan",
-        "image": "08_vmdrender_soft_material.jpg",
-        "surface_mode": "signed",
-        "material": "Glossy",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "color Name C tan",
-            "color change rgb tan 0.700000 0.560000 0.360000",
-            "material change mirror Opaque 0.15",
-            "material change outline Opaque 4.000000",
-            "material change outlinewidth Opaque 0.500000",
-            "material change ambient Glossy 0.100000",
-            "material change diffuse Glossy 0.600000",
-            "material change opacity Glossy 0.750000",
-            "material change shininess Glossy 1.000000",
-            "light 3 on",
-        ],
-        "sources": ["Multiwfn examples/scripts/showcub.vmd", "https://www.umsyar.com/449"],
-        "notes": "Multiwfn showcub.vmd / 思想家公社 449 的柔和 Lime/Cyan 参数。",
-    },
-    {
-        "id": "edgyglass_overlap_483",
-        "code": "D4",
-        "name": "D4 Density Difference · Lime/Cyan EdgyGlass",
-        "image": "03_iso2_overlap_cube.png",
-        "surface_mode": "signed",
-        "material": "EdgyGlass",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + ["light 0 on", "light 1 on", "light 2 on", "light 3 on"] + EDGYGLASS_DEFAULT,
-        "sources": ["https://www.umsyar.com/483", "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html"],
-        "notes": "用于正负区域交叠辨识的 EdgyGlass；显式记录 VMD 1.9.3 默认材质参数。",
-    },
-    {
-        "id": "bright_blue_yellow_userpack",
-        "code": "D5",
-        "name": "D5 Density Difference · Bright Cyan/Yellow",
-        "image": "23_bright_blue_yellow.png",
-        "surface_mode": "signed",
-        "material": "Glossy",
-        "pos_color": 12,
-        "neg_color": 22,
-        "alias_ids": ["bright_bule_yellow_userpack"],
-        "commands": BASE_VIEW + [
-            "color Display Background silver",
-            "color change rgb silver 0.960000 0.960000 0.960000",
-            "color change rgb 12 0.030000 0.740000 0.830000",
-            "color change rgb 22 0.920000 0.770000 0.090000",
-            "display projection Orthographic",
-            "material change ambient Glossy 0.100000",
-            "material change specular Glossy 0.080000",
-            "material change diffuse Glossy 0.920000",
-            "material change shininess Glossy 0.040000",
-            "material change opacity Glossy 1.000000",
-        ],
-        "sources": ["user-upload:Bright_Bule+Yellow.txt"],
-        "notes": "用户参数包的高对比青/黄方案；修正内部拼写并保留旧 ID 作为别名。",
-    },
-    {
         "id": "density_d6_green_orange_diffuse",
         "code": "D6",
         "name": "D6 Density Difference · Green/Orange Matte",
@@ -375,32 +523,39 @@ RAW_STYLES = [
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html", "https://www.umsyar.com/483"],
         "notes": "绿色/橙色正负区配 VMD Diffuse 哑光材质。",
     },
-    {
-        "id": "modern_cool_palette_userpack",
-        "code": "D7",
-        "name": "D7 Density Difference · Modern Cool Palette",
-        "image": "24_modern_cool_palette.png",
-        "surface_mode": "signed",
-        "material": "Glossy",
-        "pos_color": 13,
-        "neg_color": 24,
-        "commands": BASE_VIEW + [
-            "color Display Background silver",
-            "color change rgb silver 0.965000 0.965000 0.965000",
-            "color change rgb 13 0.360000 0.340000 0.580000",
-            "color change rgb 24 0.820000 0.830000 0.860000",
-            "display projection Orthographic",
-            "material change ambient Glossy 0.100000",
-            "material change specular Glossy 0.060000",
-            "material change diffuse Glossy 0.920000",
-            "material change shininess Glossy 0.030000",
-            "material change mirror Glossy 0.000000",
-            "material change opacity Glossy 1.000000",
-        ],
-        "sources": ["user-upload:Modern_cool palette.txt"],
-        "notes": "用户参数包的低高光紫灰冷色方案。",
-    },
 ]
+
+# D2/D3/D4/D5/D7 already existed before the ESP work.  Keep the original
+# cards instead of cloning or renaming them; only genuinely new presets are
+# appended.  This map records the selected research labels without changing
+# any legacy record.
+DENSITY_DIFFERENCE_STYLE_MAP = {
+    "D1": "density_d1_green_blue_glossy",
+    "D2": "classic_glossy_447",
+    "D3": "soft_glossy_449",
+    "D4": "edgyglass_overlap_483",
+    "D5": "bright_bule_yellow_userpack",
+    "D6": "density_d6_green_orange_diffuse",
+    "D7": "modern_cool_palette_userpack",
+}
+
+_APPENDED_STYLE_IDS = (
+    "esp_e1_bwr_glossy",
+    "esp_e2_bwr_translucent",
+    "esp_e3_bwr_edgyglass_443",
+    "esp_e4_turbo_edgyglass_443",
+    "esp_e5_bwr_diffuse",
+    "esp_e7_bwr_wireframe",
+    "density_d1_green_blue_glossy",
+    "density_d6_green_orange_diffuse",
+)
+_SELECTED_STYLE_BY_ID = {
+    style["id"]: style for style in _SELECTED_STYLE_RESEARCH_ENTRIES
+}
+NEW_SURFACE_STYLES = [
+    _SELECTED_STYLE_BY_ID[style_id] for style_id in _APPENDED_STYLE_IDS
+]
+RAW_STYLES = deepcopy(ORIGINAL_SURFACE_STYLES) + deepcopy(NEW_SURFACE_STYLES)
 
 
 def _style_signature(style: dict) -> tuple:
@@ -441,13 +596,12 @@ def dedupe_styles(raw_styles: list[dict]) -> tuple[list[dict], list[dict]]:
 
 STYLES, DUPLICATES = dedupe_styles(RAW_STYLES)
 STYLE_BY_ID = {style["id"]: style for style in STYLES}
-DEFAULT_STYLE_ID = "density_d1_green_blue_glossy"
+DEFAULT_STYLE_ID = "classic_glossy_447"
 
-SKELETON_STYLES = [
+ORIGINAL_SKELETON_STYLES = [
     {
         "id": "skeleton_default_opaque",
-        "code": "K1",
-        "name": "K1 Skeleton · Standard CPK",
+        "name": "Skeleton Default Opaque",
         "image": "18_sob449_1.jpg",
         "pre_commands": [],
         "rep0_commands": [
@@ -456,8 +610,74 @@ SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "Multiwfn show scripts 的标准 CPK 0.8/0.3/22/22 + Name + Opaque。",
+        "notes": "Baseline CPK+Opaque skeleton style.",
     },
+    {
+        "id": "skeleton_tan_opaque_449",
+        "name": "Skeleton Tan Opaque",
+        "image": "19_sob449_2.jpg",
+        "pre_commands": [
+            "color Name C tan",
+            "color change rgb tan 0.700000 0.560000 0.360000",
+            "material change mirror Opaque 0.15",
+            "material change outline Opaque 4.000000",
+            "material change outlinewidth Opaque 0.5",
+        ],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
+        ],
+        "sources": ["http://sobereva.com/449"],
+        "notes": "Soft tan carbon color with stronger Opaque outline.",
+    },
+    {
+        "id": "skeleton_goodsell_58009",
+        "name": "Skeleton Goodsell",
+        "image": "13_bbs_goodsell_example.jpg",
+        "pre_commands": [
+            "material change ambient Goodsell 0.650000",
+            "material change diffuse Goodsell 1.000000",
+            "material change specular Goodsell 0.100000",
+            "material change shininess Goodsell 1.000000",
+            "material change mirror Goodsell 0.000000",
+            "material change opacity Goodsell 0.700000",
+            "material change outline Goodsell 3.300000",
+            "material change outlinewidth Goodsell 0.600000",
+        ],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Goodsell",
+        ],
+        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
+        "notes": "Forum-shared soft Goodsell skeleton look.",
+    },
+    {
+        "id": "skeleton_edgy_58009",
+        "name": "Skeleton Edgy",
+        "image": "14_bbs_edgy_example1.jpg",
+        "pre_commands": [
+            "material change ambient Edgy 0.400000",
+            "material change diffuse Edgy 0.880000",
+            "material change specular Edgy 0.000000",
+            "material change shininess Edgy 0.750000",
+            "material change mirror Edgy 0.000000",
+            "material change opacity Edgy 1.000000",
+            "material change outline Edgy 1.500000",
+            "material change outlinewidth Edgy 0.800000",
+        ],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Edgy",
+        ],
+        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
+        "notes": "Forum-shared sharp Edgy skeleton look.",
+    },
+]
+
+_SKELETON_STYLE_RESEARCH_ENTRIES = [
     {
         "id": "skeleton_slim_cpk",
         "code": "K2",
@@ -487,26 +707,6 @@ SKELETON_STYLES = [
         "notes": "VMD Licorice 细棒骨架，键半径 0.2、球/棒分辨率 12。",
     },
     {
-        "id": "skeleton_tan_opaque_449",
-        "code": "K4",
-        "name": "K4 Skeleton · Tan Outlined",
-        "image": "19_sob449_2.jpg",
-        "pre_commands": [
-            "color Name C tan",
-            "color change rgb tan 0.700000 0.560000 0.360000",
-            "material change mirror Opaque 0.15",
-            "material change outline Opaque 4.000000",
-            "material change outlinewidth Opaque 0.5",
-        ],
-        "rep0_commands": [
-            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
-            "mol modcolor 0 top Name",
-            "mol modmaterial 0 top Opaque",
-        ],
-        "sources": ["http://sobereva.com/449"],
-        "notes": "Soft tan carbon color with stronger Opaque outline.",
-    },
-    {
         "id": "skeleton_monochrome_silver",
         "code": "K5",
         "name": "K5 Skeleton · Monochrome Silver",
@@ -520,53 +720,21 @@ SKELETON_STYLES = [
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node55.html"],
         "notes": "统一 Silver（ColorID 6）的中性骨架，减少与等值面配色竞争。",
     },
-    {
-        "id": "skeleton_goodsell_58009",
-        "code": "K6",
-        "name": "K6 Skeleton · Goodsell",
-        "image": "13_bbs_goodsell_example.jpg",
-        "pre_commands": [
-            "material change ambient Goodsell 0.650000",
-            "material change diffuse Goodsell 1.000000",
-            "material change specular Goodsell 0.100000",
-            "material change shininess Goodsell 1.000000",
-            "material change mirror Goodsell 0.000000",
-            "material change opacity Goodsell 0.700000",
-            "material change outline Goodsell 3.300000",
-            "material change outlinewidth Goodsell 0.600000",
-        ],
-        "rep0_commands": [
-            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
-            "mol modcolor 0 top Name",
-            "mol modmaterial 0 top Goodsell",
-        ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Forum-shared soft Goodsell skeleton look.",
-    },
-    {
-        "id": "skeleton_edgy_58009",
-        "code": "K7",
-        "name": "K7 Skeleton · Edgy",
-        "image": "14_bbs_edgy_example1.jpg",
-        "pre_commands": [
-            "material change ambient Edgy 0.400000",
-            "material change diffuse Edgy 0.880000",
-            "material change specular Edgy 0.000000",
-            "material change shininess Edgy 0.750000",
-            "material change mirror Edgy 0.000000",
-            "material change opacity Edgy 1.000000",
-            "material change outline Edgy 1.500000",
-            "material change outlinewidth Edgy 0.800000",
-        ],
-        "rep0_commands": [
-            "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
-            "mol modcolor 0 top Name",
-            "mol modmaterial 0 top Edgy",
-        ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Forum-shared sharp Edgy skeleton look.",
-    },
 ]
+_NEW_SKELETON_IDS = (
+    "skeleton_slim_cpk",
+    "skeleton_licorice",
+    "skeleton_monochrome_silver",
+)
+_SKELETON_RESEARCH_BY_ID = {
+    style["id"]: style for style in _SKELETON_STYLE_RESEARCH_ENTRIES
+}
+NEW_SKELETON_STYLES = [
+    _SKELETON_RESEARCH_BY_ID[style_id] for style_id in _NEW_SKELETON_IDS
+]
+SKELETON_STYLES = (
+    deepcopy(ORIGINAL_SKELETON_STYLES) + deepcopy(NEW_SKELETON_STYLES)
+)
 SKELETON_BY_ID = {style["id"]: style for style in SKELETON_STYLES}
 
 VMD_MATERIALS = [
@@ -2097,6 +2265,8 @@ def load_config() -> dict:
         "last_iso_style": DEFAULT_STYLE_ID if DEFAULT_STYLE_ID in STYLE_BY_ID else (STYLES[0]["id"] if STYLES else ""),
         "batch_output_dir": str(ROOT / "batch_runs"),
         "batch_last_preset": "builtin_export_xyz",
+        "automatic_output_dir": str(ROOT / "automatic_runs"),
+        "automatic_workflow_settings": {},
     }
     if CONFIG_FILE.exists():
         try:
@@ -2140,6 +2310,12 @@ def save_config(config: dict) -> None:
             "last_iso_style": value("last_iso_style", ""),
             "batch_output_dir": value("batch_output_dir", str(ROOT / "batch_runs")),
             "batch_last_preset": value("batch_last_preset", "builtin_export_xyz"),
+            "automatic_output_dir": value(
+                "automatic_output_dir", str(ROOT / "automatic_runs")
+            ),
+            "automatic_workflow_settings": value(
+                "automatic_workflow_settings", {}
+            ),
         }
         write_text_atomic(
             CONFIG_FILE, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
@@ -3149,7 +3325,7 @@ function readFileAsDataURL(file) {
 
 function isoSubtitle(st) {
   if (st.surface_mode === 'volume_mapped') {
-    const draw = Number(st.surface_draw || 0) === 1 ? 'Wireframe' : 'Solid Surface';
+    const draw = ({0: 'Solid Surface', 1: 'Wireframe', 2: 'Points', 3: 'Shaded Points'})[Number(st.surface_draw || 0)] || 'Solid Surface';
     return `Material: ${st.material} | ESP ${st.color_scale_method || 'BWR'} ${st.color_scale_min}～${st.color_scale_max} a.u. | ${draw}`;
   }
   return `Material: ${st.material} | ${st.pos_color_expr || ('ColorID ' + st.pos_color)} / ${st.neg_color_expr || ('ColorID ' + st.neg_color)}`;

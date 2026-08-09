@@ -23,6 +23,7 @@
 - **ESP 表面映射**：自动配对电子密度与静电势 Cube，校验网格一致性，并提供 BWR、Turbo、半透明、边缘玻璃和线框等预设。
 - **风格管理**：提供套装与骨架/等值面拆分模式，支持搜索、材质筛选、排序和参数调整。
 - **自定义风格**：可从 VMD Save State 导入，也可使用 OpenAI 或 Gemini 辅助识别参考图风格。
+- **全自动流程**：在独立流程目录中完成计算、校验、绘图和结果整理；首个流程可批量生成表面静电势图，并直接复用绘图方案。
 - **批量 Multiwfn**：录制或导入命令序列，预检后批量执行，并汇总日志、结果和 CSV。
 - **结果保护**：任务使用独立工作目录，避免固定文件名互相覆盖；渲染结果可保存到输入目录或指定目录。
 - **桌面体验**：支持深浅主题、响应式布局和常用快捷键。
@@ -32,7 +33,7 @@
 1. 从 [Releases](https://github.com/super3-moon/new_v/releases/latest) 下载最新版 `VMD_Multiwfn_StyleGenerator.exe`。
 2. 从 [Multiwfn 官网](http://sobereva.com/multiwfn/) 和 [VMD 官网](https://www.ks.uiuc.edu/Research/vmd/) 下载并安装程序，准备好 `Multiwfn.exe` 与 `vmd.exe`。
 3. 启动程序，在左侧设置或自动扫描软件路径。
-4. 选择绘图风格，然后使用“直接绘图”“导出脚本”或“批量 Multiwfn”。
+4. 根据任务进入“绘图方案”“全自动流程”“自定义”或“批量 Multiwfn”。
 
 > [!IMPORTANT]
 > 不提供 Multiwfn、VMD 软件即相关文件，可从对应官方渠道免费获取。
@@ -70,7 +71,15 @@ python .\vmd_style_tool_qt6.py
 3. 设置等值面数值与结果目录。
 4. Cube 文件会直接打开 VMD；其他文件会先打开 Multiwfn，完成交互并正常退出后继续进入 VMD。
 
-选择 `E1`～`E7` ESP 预设时，需要同目录中的电子密度 Cube 与静电势 Cube。程序会按常见文件名自动配对；无法确定时允许手动选择，并在启动 VMD 前检查两者网格是否兼容。
+选择 `E1`～`E5` 或 `E7` ESP 预设时，需要同目录中的电子密度 Cube 与静电势 Cube。程序会按常见文件名自动配对；无法确定时允许手动选择，并在启动 VMD 前检查两者网格是否兼容。
+
+### 全自动流程
+
+1. 在工作区进入“全自动流程”，选择“表面静电势图”。
+2. 添加一个或多个波函数文件，并选择兼容的套装方案，或分别组合骨架与 ESP 等值面方案。
+3. 确认电子密度等值面、图片尺寸和结果位置；等值面会同步用于 Multiwfn 与 VMD。
+4. 建议先运行首个文件。图片确认无误后可继续剩余文件，首文件不会重复计算。
+5. 每项任务依次完成 Multiwfn 计算、Cube 配对和空间网格检查、VMD 渲染及 PNG 整理。绘图失败时保留 Cube，可仅重试 VMD 阶段。
 
 ### 批量处理
 
@@ -94,6 +103,8 @@ python .\vmd_style_tool_qt6.py
 vmd_style_tool_qt6.py          # PySide6 桌面入口
 vmd_style_tool.py              # 风格、VMD Tcl 与脚本生成核心
 direct_workflow_qt6.py         # 直接绘图流程
+automatic_workflows.py         # 全自动流程规划与执行核心
+automatic_workflows_qt6.py     # 全自动流程目录、配置与结果界面
 multiwfn_batch.py              # 批处理规划与执行核心
 multiwfn_batch_qt6.py          # 批处理工作台界面
 multiwfn_recorder_qt6.py       # Multiwfn 操作录制

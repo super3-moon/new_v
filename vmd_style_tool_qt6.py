@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 import vmd_style_tool as core
+from automatic_workflows_qt6 import AutomaticWorkflowsPage
 from direct_workflow_qt6 import DirectWorkflowPage
 from multiwfn_batch_qt6 import MultiwfnBatchPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
@@ -700,8 +701,9 @@ class MainWindow(QMainWindow):
         left_col.addWidget(brand)
 
         workspace_sec, workspace_l = self._section("工作区")
-        workspace_row = QHBoxLayout()
-        workspace_row.setSpacing(6)
+        workspace_grid = QGridLayout()
+        workspace_grid.setHorizontalSpacing(6)
+        workspace_grid.setVerticalSpacing(6)
         self.nav_style_btn = QPushButton("绘图方案")
         self.nav_style_btn.setObjectName("navButton")
         self.nav_style_btn.setCheckable(True)
@@ -710,14 +712,21 @@ class MainWindow(QMainWindow):
         self.nav_custom_btn.setObjectName("navButton")
         self.nav_custom_btn.setCheckable(True)
         self.nav_custom_btn.clicked.connect(self._show_custom_import)
-        self.nav_batch_btn = QPushButton("批量任务")
+        self.nav_automation_btn = QPushButton("全自动流程")
+        self.nav_automation_btn.setObjectName("navButton")
+        self.nav_automation_btn.setCheckable(True)
+        self.nav_automation_btn.clicked.connect(self._show_automation_page)
+        self.nav_batch_btn = QPushButton("批量 Multiwfn")
         self.nav_batch_btn.setObjectName("navButton")
         self.nav_batch_btn.setCheckable(True)
         self.nav_batch_btn.clicked.connect(self._show_batch_page)
-        workspace_row.addWidget(self.nav_style_btn)
-        workspace_row.addWidget(self.nav_custom_btn)
-        workspace_row.addWidget(self.nav_batch_btn)
-        workspace_l.addLayout(workspace_row)
+        workspace_grid.addWidget(self.nav_style_btn, 0, 0)
+        workspace_grid.addWidget(self.nav_automation_btn, 0, 1)
+        workspace_grid.addWidget(self.nav_custom_btn, 1, 0)
+        workspace_grid.addWidget(self.nav_batch_btn, 1, 1)
+        workspace_grid.setColumnStretch(0, 1)
+        workspace_grid.setColumnStretch(1, 1)
+        workspace_l.addLayout(workspace_grid)
         left_col.addWidget(workspace_sec)
 
         self.style_mode_section, mode_l = self._section("方案组合方式")
@@ -907,6 +916,13 @@ class MainWindow(QMainWindow):
         )
         self.batch_page.settingsChanged.connect(self._save_batch_settings)
         self.batch_page_index = self.stack.addWidget(self.batch_page)
+        self.automation_page = AutomaticWorkflowsPage(
+            core.ROOT,
+            lambda: self.multi_edit.text().strip(),
+            lambda: self.vmd_edit.text().strip(),
+        )
+        self.automation_page.settingsChanged.connect(self._save_batch_settings)
+        self.automation_page_index = self.stack.addWidget(self.automation_page)
         self.direct_page = DirectWorkflowPage(
             lambda: self.multi_edit.text().strip(),
             lambda: self.vmd_edit.text().strip(),
@@ -2472,7 +2488,7 @@ class MainWindow(QMainWindow):
     def _set_page_chrome(self, page: str, title: str, subtitle: str) -> None:
         self.main_title.setText(title)
         self.main_subtitle.setText(subtitle)
-        self.page_header.setVisible(page != "batch")
+        self.page_header.setVisible(page not in {"batch", "automation"})
         showing_styles = page == "styles"
         self.filter_bar.setVisible(showing_styles)
         self.count_label.setVisible(showing_styles)
@@ -2482,6 +2498,7 @@ class MainWindow(QMainWindow):
         self.direct_shortcut.setEnabled(showing_styles)
         self.nav_style_btn.setChecked(page in {"styles", "direct"})
         self.nav_custom_btn.setChecked(page == "custom")
+        self.nav_automation_btn.setChecked(page == "automation")
         self.nav_batch_btn.setChecked(page == "batch")
         if not showing_styles:
             self.delete_custom_btn.hide()
@@ -2509,6 +2526,15 @@ class MainWindow(QMainWindow):
             "batch", "批量 Multiwfn", "记录或导入一次操作流程，再应用到整批计算文件"
         )
         self.stack.setCurrentIndex(self.batch_page_index)
+        self._animate_stack_page()
+
+    def _show_automation_page(self) -> None:
+        self._set_page_chrome(
+            "automation",
+            "全自动流程",
+            "选择完整流程，由软件依次完成计算、校验、绘图与结果整理",
+        )
+        self.stack.setCurrentIndex(self.automation_page_index)
         self._animate_stack_page()
 
     def _show_direct_workflow(self) -> None:
@@ -2570,7 +2596,12 @@ class MainWindow(QMainWindow):
             method = st.get("color_scale_method", "BWR")
             low = float(st.get("color_scale_min", -0.03))
             high = float(st.get("color_scale_max", 0.03))
-            draw = "Wireframe" if int(st.get("surface_draw", 0)) == 1 else "Solid Surface"
+            draw = {
+                0: "Solid Surface",
+                1: "Wireframe",
+                2: "Points",
+                3: "Shaded Points",
+            }.get(int(st.get("surface_draw", 0)), "Solid Surface")
             return f"{st.get('material', 'Glossy')} | ESP {method} {low:g}～{high:g} | {draw}"
         pos = st.get("pos_color_expr", f"ColorID {st.get('pos_color', 1)}")
         neg = st.get("neg_color_expr", f"ColorID {st.get('neg_color', 0)}")
@@ -2672,6 +2703,7 @@ class MainWindow(QMainWindow):
         self._refresh_styles()
         self._set_mode(conf.get("mode", "bundle"))
         self.batch_page.load_settings(conf)
+        self.automation_page.load_settings(conf)
         if core.CUSTOM_STYLES_LOAD_ERROR:
             self._log(core.CUSTOM_STYLES_LOAD_ERROR)
 
@@ -3500,12 +3532,22 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "批处理进行中", "请先停止批处理任务，再关闭软件。")
             event.ignore()
             return
+        if hasattr(self, "automation_page") and self.automation_page.is_running():
+            QMessageBox.information(
+                self,
+                "全自动流程进行中",
+                "请先停止当前全自动流程，再关闭软件。",
+            )
+            event.ignore()
+            return
         if self.ai_thread is not None and self.ai_thread.isRunning():
             QMessageBox.information(self, "识别进行中", "AI 识别完成后即可关闭软件。")
             event.ignore()
             return
         if hasattr(self, "direct_page"):
             self.direct_page.cleanup()
+        if hasattr(self, "automation_page"):
+            self.automation_page.cleanup()
         self._cleanup_ai_temp_files()
         super().closeEvent(event)
 
