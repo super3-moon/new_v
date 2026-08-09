@@ -66,7 +66,7 @@ class CoreBehaviorTests(unittest.TestCase):
         self.assertIn("display depthcue off", script)
         self.assertIn("light 0 on", script)
         executable_lines = [
-            line for line in script.splitlines() if not line.lstrip().startswith("echo #")
+            line for line in script.splitlines() if "echo #" not in line
         ]
         self.assertNotIn("exec hidden", "\n".join(executable_lines))
         self.assertNotIn("for %%E in (cub dat)", script)
@@ -152,7 +152,97 @@ mol addrep top
         self.assertEqual(edited["material"], source["material"])
         self.assertIn("material change mirror Opaque 0.15", edited["commands"])
         self.assertIn("material change ambient Glossy 0.100000", edited["commands"])
-        self.assertEqual(source["name"], "Soft Artistic Glossy")
+        self.assertEqual(source["code"], "D3")
+
+    def test_selected_iso_and_skeleton_presets_are_unique_and_complete(self) -> None:
+        self.assertEqual(
+            [style["code"] for style in core.STYLES],
+            ["E1", "E2", "E3", "E4", "E5", "E7", "D1", "D2", "D3", "D4", "D5", "D6", "D7"],
+        )
+        self.assertEqual(
+            [style["code"] for style in core.SKELETON_STYLES],
+            ["K1", "K2", "K3", "K4", "K5", "K6", "K7"],
+        )
+        self.assertEqual(core.DUPLICATES, [])
+        self.assertEqual(len({core._style_signature(style) for style in core.STYLES}), 13)
+
+    def test_esp_style_maps_a_second_volume_to_one_density_isosurface(self) -> None:
+        style = core.STYLE_BY_ID["esp_e1_bwr_glossy"]
+        tcl = core.build_vmd_tcl(style)
+        self.assertIn("$::env(COLOR_CUBE_FILE)", tcl)
+        self.assertIn("mol addfile $AUTO_COLOR_CUBE_FILE type cube waitfor all", tcl)
+        self.assertIn("mol modcolor 1 top Volume 1", tcl)
+        self.assertIn("mol scaleminmax top 1 -0.03 0.03", tcl)
+        self.assertNotIn("set negiso", tcl)
+        self.assertEqual(
+            len([line for line in tcl.splitlines() if line.startswith("mol modstyle") and " Isosurface " in line]),
+            1,
+        )
+        script = core.build_cmd_script(
+            style, r"C:\Tools\Multiwfn.exe", r"C:\Tools\VMD\vmd.exe"
+        )
+        self.assertIn('set "COLOR_CUBE_FILE="', script)
+        self.assertIn("density|dens|rho", script)
+        self.assertIn("totesp|esp|mep|potential|electrostatic", script)
+        self.assertIn("press Enter for 0.001", script)
+
+    def test_wireframe_and_turbo_presets_are_vmd_193_compatible(self) -> None:
+        wireframe = core.build_vmd_tcl(core.STYLE_BY_ID["esp_e7_bwr_wireframe"])
+        self.assertIn("Isosurface $AUTO_ISOVAL 0 0 1 3 1", wireframe)
+
+        turbo = core.build_vmd_tcl(core.STYLE_BY_ID["esp_e4_turbo_edgyglass_443"])
+        self.assertNotIn("color scale method turbo", turbo.lower())
+        self.assertIn("color scale method RGB", turbo)
+        self.assertIn("$AUTO_TURBO_I < 1024", turbo)
+        self.assertIn("color change rgb [expr {33 + $AUTO_TURBO_I}]", turbo)
+        self.assertEqual(len(core._turbo_vmd_commands()), 12)
+        turbo_cmd = core.build_cmd_script(
+            core.STYLE_BY_ID["esp_e4_turbo_edgyglass_443"],
+            r"C:\Tools\Multiwfn.exe",
+            r"C:\Tools\VMD\vmd.exe",
+        )
+        self.assertLess(max(len(line) for line in turbo_cmd.splitlines()), 8191)
+        self.assertNotIn('> "%TCL_FILE%" (', turbo_cmd)
+
+    def test_esp_pair_detection_and_cube_grid_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            density = root / "density1.cub"
+            esp = root / "ESP1.cub"
+            header = (
+                "cube title\n"
+                "generated for test\n"
+                " 1 0.0 0.0 0.0\n"
+                " 2 0.5 0.0 0.0\n"
+                " 2 0.0 0.5 0.0\n"
+                " 2 0.0 0.0 0.5\n"
+                " 1 0.0 0.0 0.0 0.0\n"
+            )
+            density.write_text(header, encoding="utf-8")
+            esp.write_text(header, encoding="utf-8")
+            self.assertEqual(core.find_esp_cube_pair(esp), (density.resolve(), esp.resolve()))
+            self.assertTrue(core.cube_grids_compatible(density, esp))
+
+            mismatch = root / "ESP2.cub"
+            mismatch.write_text(header.replace(" 2 0.0 0.5 0.0", " 3 0.0 0.5 0.0"), encoding="utf-8")
+            self.assertEqual(
+                core.find_esp_cube_pair(density),
+                (density.resolve(), esp.resolve()),
+            )
+            self.assertFalse(core.cube_grids_compatible(density, mismatch))
+
+    def test_manual_edit_of_esp_style_preserves_mapping_contract(self) -> None:
+        source = core.STYLE_BY_ID["esp_e3_bwr_edgyglass_443"]
+        parameters = core.extract_style_visual_parameters(source)
+        parameters["color_scale_min"] = -0.04
+        parameters["color_scale_max"] = 0.04
+        edited = core.build_custom_style_from_visual_parameters(
+            parameters, source, "ESP custom", "mapping edit"
+        )
+        self.assertEqual(edited["surface_mode"], "volume_mapped")
+        self.assertEqual(edited["color_scale_min"], -0.04)
+        self.assertEqual(edited["color_scale_max"], 0.04)
+        self.assertIn("mol modcolor 1 top Volume 1", core.build_vmd_tcl(edited))
 
 
 class PersistenceTests(unittest.TestCase):

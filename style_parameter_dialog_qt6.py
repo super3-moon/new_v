@@ -36,6 +36,7 @@ MATERIAL_LABELS = {
     "opacity": "不透明度 Opacity",
     "outline": "轮廓强度 Outline",
     "outlinewidth": "轮廓宽度 Outline Width",
+    "transmode": "透明模式 Transmode",
 }
 
 
@@ -154,11 +155,27 @@ class StyleParameterDialog(QDialog):
 
         positive = self._color_text("positive", self.parameters.get("pos_color_id"))
         negative = self._color_text("negative", self.parameters.get("neg_color_id"))
+        draw_names = {0: "Solid Surface", 1: "Wireframe", 2: "Points", 3: "Shaded Points"}
+        if self.parameters.get("surface_mode") == "volume_mapped":
+            surface_text = (
+                f"{self.parameters.get('material') or 'Glossy'} · 电子密度等值面映射 ESP · "
+                f"{self.parameters.get('color_scale_method') or 'BWR'} "
+                f"{float(self.parameters.get('color_scale_min', -0.03)):g}～"
+                f"{float(self.parameters.get('color_scale_max', 0.03)):g} a.u. · "
+                f"{draw_names.get(int(self.parameters.get('surface_draw', 0)), 'Solid Surface')} · "
+                f"Step {int(self.parameters.get('surface_step', 1))} / Size {int(self.parameters.get('surface_size', 1))}"
+            )
+        else:
+            surface_text = (
+                f"{self.parameters.get('material') or 'Glossy'} · 正相 {positive} · 负相 {negative} · "
+                f"{draw_names.get(int(self.parameters.get('surface_draw', 0)), 'Solid Surface')} · "
+                f"Step {int(self.parameters.get('surface_step', 1))} / Size {int(self.parameters.get('surface_size', 1))}"
+            )
         self._add_summary_row(
             grid,
             0,
             "等值面",
-            f"{self.parameters.get('material') or 'Glossy'} · 正相 {positive} · 负相 {negative}",
+            surface_text,
         )
 
         material_values = []
@@ -271,9 +288,71 @@ class StyleParameterDialog(QDialog):
         self.material_combo.setCurrentText(self.parameters["material"])
         self.edit_widgets.append(self.material_combo)
         material_form.addRow("等值面材质", self.material_combo)
+        self.surface_draw_combo = QComboBox()
+        for label, value in (
+            ("实体表面 Solid Surface", 0),
+            ("网格线框 Wireframe", 1),
+            ("点 Points", 2),
+            ("着色点 Shaded Points", 3),
+        ):
+            self._add_combo(self.surface_draw_combo, label, value)
+        self.surface_draw_combo.setCurrentIndex(
+            max(0, self.surface_draw_combo.findData(self.parameters["surface_draw"]))
+        )
+        self.edit_widgets.append(self.surface_draw_combo)
+        material_form.addRow("表面绘制方式", self.surface_draw_combo)
+        resolution_holder = QWidget()
+        resolution_layout = QHBoxLayout(resolution_holder)
+        resolution_layout.setContentsMargins(0, 0, 0, 0)
+        self.surface_step_spin = QSpinBox()
+        self.surface_step_spin.setRange(1, 20)
+        self.surface_step_spin.setValue(int(self.parameters["surface_step"]))
+        self.surface_size_spin = QSpinBox()
+        self.surface_size_spin.setRange(1, 20)
+        self.surface_size_spin.setValue(int(self.parameters["surface_size"]))
+        resolution_layout.addWidget(QLabel("Step"))
+        resolution_layout.addWidget(self.surface_step_spin)
+        resolution_layout.addWidget(QLabel("Size"))
+        resolution_layout.addWidget(self.surface_size_spin)
+        resolution_layout.addStretch(1)
+        self.edit_widgets.extend((self.surface_step_spin, self.surface_size_spin))
+        material_form.addRow("表面采样 / 线点尺寸", resolution_holder)
+
+        self.color_scale_combo: QComboBox | None = None
+        self.color_scale_min_spin: QDoubleSpinBox | None = None
+        self.color_scale_max_spin: QDoubleSpinBox | None = None
+        if self.parameters.get("surface_mode") == "volume_mapped":
+            self.color_scale_combo = QComboBox()
+            self.color_scale_combo.addItems(["BWR", "RWB", "RGB", "BGR", "Turbo"])
+            if self.color_scale_combo.findText(self.parameters["color_scale_method"]) < 0:
+                self.color_scale_combo.addItem(self.parameters["color_scale_method"])
+            self.color_scale_combo.setCurrentText(self.parameters["color_scale_method"])
+            self.edit_widgets.append(self.color_scale_combo)
+            material_form.addRow("ESP 色标", self.color_scale_combo)
+
+            scale_holder = QWidget()
+            scale_layout = QHBoxLayout(scale_holder)
+            scale_layout.setContentsMargins(0, 0, 0, 0)
+            self.color_scale_min_spin = QDoubleSpinBox()
+            self.color_scale_max_spin = QDoubleSpinBox()
+            for spin, value in (
+                (self.color_scale_min_spin, self.parameters["color_scale_min"]),
+                (self.color_scale_max_spin, self.parameters["color_scale_max"]),
+            ):
+                spin.setDecimals(6)
+                spin.setRange(-1000000.0, 1000000.0)
+                spin.setSingleStep(0.005)
+                spin.setValue(float(value))
+                self.edit_widgets.append(spin)
+            scale_layout.addWidget(QLabel("下限"))
+            scale_layout.addWidget(self.color_scale_min_spin)
+            scale_layout.addWidget(QLabel("上限"))
+            scale_layout.addWidget(self.color_scale_max_spin)
+            material_form.addRow("ESP 映射范围 (a.u.)", scale_holder)
         iso_layout.addLayout(material_form)
-        iso_layout.addWidget(self._make_color_row("positive", "正等值面", self.parameters["pos_color_id"], self.parameters["positive_rgb"], self.parameters["positive_rgb_explicit"]))
-        iso_layout.addWidget(self._make_color_row("negative", "负等值面", self.parameters["neg_color_id"], self.parameters["negative_rgb"], self.parameters["negative_rgb_explicit"]))
+        if self.parameters.get("surface_mode") != "volume_mapped":
+            iso_layout.addWidget(self._make_color_row("positive", "正等值面", self.parameters["pos_color_id"], self.parameters["positive_rgb"], self.parameters["positive_rgb_explicit"]))
+            iso_layout.addWidget(self._make_color_row("negative", "负等值面", self.parameters["neg_color_id"], self.parameters["negative_rgb"], self.parameters["negative_rgb_explicit"]))
         body_layout.addWidget(iso_card)
         self.edit_cards.append(iso_card)
 
@@ -558,6 +637,18 @@ class StyleParameterDialog(QDialog):
     def _collect(self) -> dict:
         output = dict(self.parameters)
         output["material"] = self.material_combo.currentText()
+        output["surface_draw"] = self.surface_draw_combo.currentData()
+        output["surface_step"] = self.surface_step_spin.value()
+        output["surface_size"] = self.surface_size_spin.value()
+        if self.color_scale_combo is not None:
+            output["color_scale_method"] = self.color_scale_combo.currentText()
+        if self.color_scale_min_spin is not None and self.color_scale_max_spin is not None:
+            scale_min = self.color_scale_min_spin.value()
+            scale_max = self.color_scale_max_spin.value()
+            if scale_min >= scale_max:
+                raise ValueError("ESP 映射下限必须小于上限。")
+            output["color_scale_min"] = scale_min
+            output["color_scale_max"] = scale_max
         output["projection"] = self.projection_combo.currentData()
         output["rendermode"] = self.rendermode_combo.currentData()
         output["axes"] = self.axes_combo.currentData()
@@ -573,11 +664,15 @@ class StyleParameterDialog(QDialog):
         output["skeleton_color_method"] = self.parameters["skeleton_color_method"]
         output["original_rep0_commands"] = self.rep0_commands
         for key, prefix in (("positive", "positive"), ("negative", "negative"), ("skeleton", "skeleton"), ("background", "background")):
+            if key not in self.color_rows:
+                continue
             row = self.color_rows[key]
             output[f"{prefix}_rgb"] = row["button"].rgb
             output[f"{prefix}_rgb_explicit"] = row["check"].isChecked()
-        output["pos_color_id"] = self.color_rows["positive"]["id"].value()
-        output["neg_color_id"] = self.color_rows["negative"]["id"].value()
+        if "positive" in self.color_rows:
+            output["pos_color_id"] = self.color_rows["positive"]["id"].value()
+        if "negative" in self.color_rows:
+            output["neg_color_id"] = self.color_rows["negative"]["id"].value()
         if output["background_rgb_explicit"] and not self.parameters["background_rgb_explicit"]:
             output["background_token"] = "silver"
         return output

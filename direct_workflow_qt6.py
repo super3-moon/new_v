@@ -252,9 +252,9 @@ class DirectWorkflowPage(QWidget):
         self.iso_edit.setValidator(validator)
         self.iso_edit.setPlaceholderText("例如 0.05")
         settings_layout.addWidget(self.iso_edit)
-        iso_hint = QLabel("请按分析需要填写正数，负等值面会自动使用相反数。")
-        iso_hint.setObjectName("helperText")
-        settings_layout.addWidget(iso_hint)
+        self.iso_hint = QLabel("请按分析需要填写正数，负等值面会自动使用相反数。")
+        self.iso_hint.setObjectName("helperText")
+        settings_layout.addWidget(self.iso_hint)
         body_layout.addWidget(settings_card)
 
         status_card, status_layout = self._card("工作流状态")
@@ -321,11 +321,25 @@ class DirectWorkflowPage(QWidget):
         self.rep0_commands = list(rep0_commands) if rep0_commands else None
         self.style_name_label.setText(str(style.get("name") or "未命名风格"))
         material = str(style.get("material") or "Glossy")
-        pos = str(style.get("pos_color_expr") or f"ColorID {style.get('pos_color', 1)}")
-        neg = str(style.get("neg_color_expr") or f"ColorID {style.get('neg_color', 0)}")
-        self.style_meta_label.setText(
-            f"{selection_text} · 材质 {material} · 正等值面 {pos} · 负等值面 {neg}"
-        )
+        surface_mode = str(style.get("surface_mode") or "signed")
+        if surface_mode == "volume_mapped":
+            method = str(style.get("color_scale_method") or "BWR")
+            low = float(style.get("color_scale_min", -0.03))
+            high = float(style.get("color_scale_max", 0.03))
+            self.style_meta_label.setText(
+                f"{selection_text} · 材质 {material} · 电子密度等值面映射 ESP · {method} {low:g}～{high:g} a.u."
+            )
+            self.iso_hint.setText(
+                "填写电子密度等值面值；ESP 风格需要一对空间坐标对齐的电子密度 Cube 与 ESP Cube。"
+            )
+        else:
+            pos = str(style.get("pos_color_expr") or f"ColorID {style.get('pos_color', 1)}")
+            neg = str(style.get("neg_color_expr") or f"ColorID {style.get('neg_color', 0)}")
+            self.style_meta_label.setText(
+                f"{selection_text} · 材质 {material} · 正等值面 {pos} · 负等值面 {neg}"
+            )
+            self.iso_hint.setText("请按分析需要填写正数，负等值面会自动使用相反数。")
+        self.iso_edit.setText(format(float(style.get("default_iso_value", 0.05)), ".12g"))
 
     def set_source_file(self, raw_path: str) -> None:
         if self.is_running():
@@ -466,9 +480,14 @@ class DirectWorkflowPage(QWidget):
         self.stop_button.show()
         self.back_button.setEnabled(False)
         self.manual_cube_button.hide()
-        self._set_status(
-            "Multiwfn 已打开。请在其窗口中生成一个 Cube 文件，然后正常输入 q 退出。"
-        )
+        if str(self.style_data.get("surface_mode") or "signed") == "volume_mapped":
+            self._set_status(
+                "Multiwfn 已打开。请生成空间坐标对齐的电子密度 Cube 与 ESP Cube，然后正常输入 q 退出。"
+            )
+        else:
+            self._set_status(
+                "Multiwfn 已打开。请在其窗口中生成一个 Cube 文件，然后正常输入 q 退出。"
+            )
         self._append_log(f"已启动 Multiwfn：{self.source_path.name}")
 
     def _changed_cubes(self) -> list[Path]:
@@ -576,6 +595,49 @@ class DirectWorkflowPage(QWidget):
             self.manual_cube_button.show()
             return
         vmd = vmd.resolve()
+        surface_cube = cube.resolve()
+        color_cube: Path | None = None
+        if str(self.style_data.get("surface_mode") or "signed") == "volume_mapped":
+            pair = core.find_esp_cube_pair(surface_cube)
+            if pair is None:
+                selected_role = core.cube_semantic_role(surface_cube)
+                requested_role = "电子密度" if selected_role == "esp" else "ESP"
+                companion_raw, _ = QFileDialog.getOpenFileName(
+                    self,
+                    f"选择配套的{requested_role} Cube",
+                    str(surface_cube.parent),
+                    "Cube (*.cub *.cube);;所有文件 (*)",
+                )
+                if not companion_raw:
+                    self.start_button.setEnabled(True)
+                    self.start_button.setText("在 VMD 中绘图")
+                    self.manual_cube_button.show()
+                    self._set_status("ESP 等值面需要电子密度 Cube 和 ESP Cube；尚未选择完整文件对。")
+                    return
+                companion = Path(companion_raw).resolve()
+                pair = core.find_esp_cube_pair(surface_cube, [surface_cube, companion])
+                if pair is None:
+                    if selected_role == "esp":
+                        pair = (companion, surface_cube)
+                    else:
+                        pair = (surface_cube, companion)
+            surface_cube, color_cube = pair
+            try:
+                grids_match = core.cube_grids_compatible(surface_cube, color_cube)
+            except ValueError as exc:
+                QMessageBox.critical(self, "Cube 文件无效", str(exc))
+                self.start_button.setEnabled(True)
+                self.start_button.setText("在 VMD 中绘图")
+                return
+            if not grids_match:
+                QMessageBox.critical(
+                    self,
+                    "Cube 网格不一致",
+                    "电子密度 Cube 与 ESP Cube 的空间范围或网格方向不相容，不能进行可靠的表面映射。两份文件允许使用不同网格密度。",
+                )
+                self.start_button.setEnabled(True)
+                self.start_button.setText("在 VMD 中绘图")
+                return
         tcl_path = Path(tempfile.gettempdir()) / f"autocube_direct_{uuid.uuid4().hex}.tcl"
         try:
             core.write_text_atomic(
@@ -583,7 +645,9 @@ class DirectWorkflowPage(QWidget):
                 core.build_vmd_tcl(self.style_data, rep0_commands=self.rep0_commands),
             )
             env = os.environ.copy()
-            env["CUBE_FILE"] = str(cube.resolve())
+            env["CUBE_FILE"] = str(surface_cube)
+            if color_cube is not None:
+                env["COLOR_CUBE_FILE"] = str(color_cube)
             env["ISO_NORM"] = self._iso_text(iso_value)
             env["A_DIR"] = str(output_dir.resolve())
             self.vmd_process = subprocess.Popen(
@@ -604,7 +668,7 @@ class DirectWorkflowPage(QWidget):
             return
 
         self.temp_tcl_path = tcl_path
-        self.cube_path = cube
+        self.cube_path = surface_cube
         self.process_timer.start()
         self._set_finish_actions_visible(False)
         self.start_button.setEnabled(False)
@@ -615,9 +679,14 @@ class DirectWorkflowPage(QWidget):
         self._set_status(
             f"VMD 已启动。使用 Render 保存图片时，输出将默认进入：{output_dir}"
         )
-        self._append_log(
-            f"已用 {self.style_name_label.text()} 打开 {cube.name}，等值面 ±{self._iso_text(iso_value)}。"
-        )
+        if color_cube is not None:
+            self._append_log(
+                f"已用 {self.style_name_label.text()} 打开电子密度 {surface_cube.name}，映射 {color_cube.name}，等值面 {self._iso_text(iso_value)}。"
+            )
+        else:
+            self._append_log(
+                f"已用 {self.style_name_label.text()} 打开 {surface_cube.name}，等值面 ±{self._iso_text(iso_value)}。"
+            )
 
     def _poll_processes(self) -> None:
         if self.multiwfn_process is not None:
