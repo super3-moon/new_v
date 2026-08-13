@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 
 import automatic_workflows as automation
 import vmd_style_tool as core
+from orbital_diagram_qt6 import OrbitalDiagramPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
 from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QDoubleValidator, QPainter, QPixmap
@@ -87,6 +88,10 @@ def _style_preview(style: dict, width: int, height: int) -> QPixmap:
 
 def _style_summary(style: dict) -> str:
     material = str(style.get("material") or "Glossy")
+    if str(style.get("surface_mode") or "signed") == "signed":
+        positive = int(style.get("pos_color", 1))
+        negative = int(style.get("neg_color", 0))
+        return f"{material} · 正相位 ColorID {positive} · 负相位 ColorID {negative}"
     method = str(style.get("color_scale_method") or "BWR")
     low = float(style.get("color_scale_min", -0.03))
     high = float(style.get("color_scale_max", 0.03))
@@ -239,11 +244,18 @@ class _StyleChoiceList(QScrollArea):
 
 
 class AutomationStyleDialog(QDialog):
-    """Select one ESP-compatible drawing scheme without exposing Tcl or JSON."""
+    """Select a workflow-compatible drawing scheme without exposing Tcl or JSON."""
 
-    def __init__(self, current: dict | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        current: dict | None = None,
+        parent: QWidget | None = None,
+        *,
+        surface_mode: str = "volume_mapped",
+    ) -> None:
         super().__init__(parent)
         current = current or {}
+        self.surface_mode = "signed" if surface_mode == "signed" else "volume_mapped"
         self.setWindowTitle("选择绘图方案")
         self.setModal(True)
         self.resize(980, 700)
@@ -252,14 +264,15 @@ class AutomationStyleDialog(QDialog):
         self.styles = [
             copy.deepcopy(style)
             for style in core.get_all_bundle_styles()
-            if str(style.get("surface_mode") or "") == "volume_mapped"
+            if str(style.get("surface_mode") or "signed") == self.surface_mode
         ]
         self.style_map = {str(style.get("id") or ""): style for style in self.styles}
         self.skeletons = [copy.deepcopy(style) for style in core.SKELETON_STYLES]
         self.skeleton_map = {str(style.get("id") or ""): style for style in self.skeletons}
         self.mode = str(current.get("mode") or "bundle")
-        self.bundle_id = str(current.get("bundle_id") or DEFAULT_STYLE_ID)
-        self.iso_id = str(current.get("bundle_id") or current.get("iso_id") or DEFAULT_STYLE_ID)
+        default_style_id = DEFAULT_STYLE_ID if self.surface_mode == "volume_mapped" else core.DEFAULT_STYLE_ID
+        self.bundle_id = str(current.get("bundle_id") or default_style_id)
+        self.iso_id = str(current.get("bundle_id") or current.get("iso_id") or default_style_id)
         self.skeleton_id = str(current.get("skeleton_id") or "")
 
         if self.bundle_id not in self.style_map and self.styles:
@@ -272,10 +285,18 @@ class AutomationStyleDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
-        heading = QLabel("选择用于表面静电势图的绘图方案")
+        heading = QLabel(
+            "选择用于分子轨道的绘图方案"
+            if self.surface_mode == "signed"
+            else "选择用于表面静电势图的绘图方案"
+        )
         heading.setObjectName("batchHeroTitle")
         root.addWidget(heading)
-        hint = QLabel("这里只显示能够把 ESP 数据映射到电子密度表面的方案。科学等值面仍由自动化流程统一控制。")
+        hint = QLabel(
+            "这里只显示具有正、负相位配色的轨道等值面方案。它是进入 VMD 时的初始方案；确认前仍可在 VMD 中自由调整全部显示参数。"
+            if self.surface_mode == "signed"
+            else "这里只显示能够把 ESP 数据映射到电子密度表面的方案。科学等值面仍由自动化流程统一控制。"
+        )
         hint.setObjectName("batchHint")
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -358,7 +379,7 @@ class AutomationStyleDialog(QDialog):
             if skeleton is None or iso_style is None:
                 raise ValueError("拆分模式需要同时选择骨架和等值面方案。")
             style = core.compose_combo_style(skeleton, iso_style)
-            style["surface_mode"] = "volume_mapped"
+            style["surface_mode"] = self.surface_mode
             rep0 = list(skeleton.get("rep0_commands") or [])
             text = f"骨架：{skeleton.get('name')} · 等值面：{iso_style.get('name')}"
             return style, rep0, text
@@ -585,9 +606,11 @@ class AutomaticWorkflowsPage(QWidget):
         text.addWidget(title)
         text.addWidget(subtitle)
         layout.addLayout(text, 1)
-        badge = QLabel("1 个流程")
-        badge.setObjectName("batchBadge")
-        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.workflow_count_badge = QLabel(
+            f"{len(automation.workflow_definitions())} 个流程"
+        )
+        self.workflow_count_badge.setObjectName("batchBadge")
+        layout.addWidget(self.workflow_count_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         return hero
 
     def _build_ui(self) -> None:
@@ -601,6 +624,17 @@ class AutomaticWorkflowsPage(QWidget):
         self.page_stack.addWidget(self._build_catalog_page())
         self.page_stack.addWidget(self._build_configuration_page())
         self.page_stack.addWidget(self._build_results_page())
+        self.orbital_page = OrbitalDiagramPage(
+            self.storage_dir,
+            self.multiwfn_path_getter,
+            self.vmd_path_getter,
+            style_dialog_factory=AutomationStyleDialog,
+        )
+        self.orbital_page.settingsChanged.connect(self.settingsChanged.emit)
+        self.orbital_page.backRequested.connect(
+            lambda: self.page_stack.setCurrentIndex(0)
+        )
+        self.orbital_page_index = self.page_stack.addWidget(self.orbital_page)
         self.page_stack.setCurrentIndex(0)
 
     def _build_catalog_page(self) -> QWidget:
@@ -642,8 +676,47 @@ class AutomaticWorkflowsPage(QWidget):
         start.clicked.connect(lambda: self.page_stack.setCurrentIndex(1))
         flow_layout.addWidget(start, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(flow_card)
+
+        orbital_card = QFrame()
+        orbital_card.setObjectName("batchCard")
+        orbital_layout = QHBoxLayout(orbital_card)
+        orbital_layout.setContentsMargins(20, 18, 20, 18)
+        orbital_layout.setSpacing(18)
+        orbital_icon = QLabel("MO")
+        orbital_icon.setObjectName("batchEmptyIcon")
+        orbital_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        orbital_icon.setFixedSize(74, 74)
+        orbital_layout.addWidget(orbital_icon)
+        orbital_text = QVBoxLayout()
+        orbital_text.setSpacing(5)
+        orbital_title = QLabel("分子轨道能级图")
+        orbital_title.setObjectName("batchCardTitle")
+        orbital_description = QLabel(
+            "配对 Gaussian/ORCA 输出与 FCH/Molden，选择需要的轨道，在 VMD 中自由调整一次最终场景，随后统一用 Tachyon 渲染并自动排版。"
+        )
+        orbital_description.setObjectName("batchHint")
+        orbital_description.setWordWrap(True)
+        orbital_tags = QLabel("Gaussian / ORCA · Multiwfn + VMD · 统一视角 · 自动能级排版")
+        orbital_tags.setObjectName("detailLabel")
+        orbital_tags.setWordWrap(True)
+        orbital_text.addWidget(orbital_title)
+        orbital_text.addWidget(orbital_description)
+        orbital_text.addWidget(orbital_tags)
+        orbital_layout.addLayout(orbital_text, 1)
+        self.orbital_start_button = QPushButton("开始配置")
+        self.orbital_start_button.setObjectName("primaryBtn")
+        self.orbital_start_button.setMinimumHeight(42)
+        self.orbital_start_button.clicked.connect(self._show_orbital_page)
+        orbital_layout.addWidget(
+            self.orbital_start_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        layout.addWidget(orbital_card)
         layout.addStretch(1)
         return self._scroll_page(body, 420)
+
+    def _show_orbital_page(self) -> None:
+        if hasattr(self, "orbital_page_index"):
+            self.page_stack.setCurrentIndex(self.orbital_page_index)
 
     def _build_configuration_page(self) -> QWidget:
         page = QWidget()
@@ -1718,17 +1791,22 @@ class AutomaticWorkflowsPage(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def is_running(self) -> bool:
-        return self.thread is not None and self.thread.isRunning()
+        esp_running = self.thread is not None and self.thread.isRunning()
+        orbital_running = (
+            hasattr(self, "orbital_page") and self.orbital_page.is_running()
+        )
+        return bool(esp_running or orbital_running)
 
     def cancel(self) -> None:
-        if not self.is_running():
-            return
-        self._cancel_requested = True
-        self.cancel_button.setEnabled(False)
-        self._set_run_state("正在停止", "warning")
-        self._append_log("正在停止当前 Multiwfn 或 VMD 进程……")
-        if self.worker is not None:
-            self.worker.cancel()
+        if self.thread is not None and self.thread.isRunning():
+            self._cancel_requested = True
+            self.cancel_button.setEnabled(False)
+            self._set_run_state("正在停止", "warning")
+            self._append_log("正在停止当前 Multiwfn 或 VMD 进程……")
+            if self.worker is not None:
+                self.worker.cancel()
+        if hasattr(self, "orbital_page") and self.orbital_page.is_running():
+            self.orbital_page.cancel()
 
     def _cleanup_thread(self) -> None:
         if self.worker is not None:
@@ -1740,6 +1818,8 @@ class AutomaticWorkflowsPage(QWidget):
 
     def cleanup(self) -> None:
         self.cancel()
+        if hasattr(self, "orbital_page"):
+            self.orbital_page.cleanup()
 
     def load_settings(self, config: dict) -> None:
         output = str(
@@ -1747,6 +1827,8 @@ class AutomaticWorkflowsPage(QWidget):
             or (Path(config.get("output_dir") or self.storage_dir) / "automatic_runs")
         )
         self.output_dir_edit.setText(output)
+        if hasattr(self, "orbital_page"):
+            self.orbital_page.load_settings(config)
         saved = config.get("automatic_workflow_settings")
         if not isinstance(saved, dict):
             self._sync_summary()

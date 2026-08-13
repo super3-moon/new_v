@@ -19,7 +19,17 @@ a = Analysis(
     datas=style_data + [
         (str(root / 'vmd_custom_styles.default.json'), '.'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'orbital_diagram_workflow',
+        'orbital_data',
+        'orbital_vmd',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
+        'PIL.ImageFont',
+        'PIL.PngImagePlugin',
+        'PIL.TgaImagePlugin',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

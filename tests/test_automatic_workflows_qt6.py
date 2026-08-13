@@ -60,7 +60,8 @@ class AutomaticWorkflowInterfaceTests(unittest.TestCase):
                 label.text() for label in window.automation_page.findChildren(QLabel)
             )
             self.assertIn("表面静电势图", texts)
-            self.assertIn("1 个流程", texts)
+            self.assertIn("2 个流程", texts)
+            self.assertIn("分子轨道能级图", texts)
         finally:
             window.close()
 

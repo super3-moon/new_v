@@ -81,11 +81,16 @@ class AutomaticWorkflowTests(unittest.TestCase):
             **overrides,
         }
 
-    def test_catalog_registers_esp_as_one_automatic_workflow(self) -> None:
+    def test_catalog_registers_esp_and_orbital_diagram_workflows(self) -> None:
         definitions = automation.workflow_definitions()
-        self.assertEqual([item.id for item in definitions], ["surface_esp"])
+        self.assertEqual(
+            [item.id for item in definitions],
+            ["surface_esp", "orbital_energy_diagram"],
+        )
         self.assertEqual(definitions[0].engine, "Multiwfn + VMD")
         self.assertIn(".fch", definitions[0].input_extensions)
+        self.assertEqual(definitions[1].input_mode, "paired_qc_wavefunction")
+        self.assertIn(".out", definitions[1].input_extensions)
 
     def test_settings_keep_scientific_iso_separate_from_style(self) -> None:
         normalized = automation.normalize_settings(self._settings(rho_iso="0.002"))

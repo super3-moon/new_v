@@ -24,6 +24,7 @@ import vmd_style_tool as vmd_core
 
 AUTOMATION_SCHEMA_VERSION = 1
 WORKFLOW_SURFACE_ESP = "surface_esp"
+WORKFLOW_ORBITAL_DIAGRAM = "orbital_energy_diagram"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -61,6 +62,8 @@ class WorkflowDefinition:
     description: str
     engine: str
     input_extensions: tuple[str, ...]
+    handler: str = "surface_esp"
+    input_mode: str = "single_wavefunction"
 
 
 def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
@@ -75,6 +78,25 @@ def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
             ),
             engine="Multiwfn + VMD",
             input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_ORBITAL_DIAGRAM,
+            name="分子轨道能级图",
+            description=(
+                "配对 Gaussian/ORCA 输出与 FCH/Molden 波函数，批量生成指定轨道，"
+                "在 VMD 中统一取景后用 Tachyon 渲染并自动排版。"
+            ),
+            engine="Multiwfn + VMD",
+            input_extensions=(
+                ".out",
+                ".log",
+                ".fch",
+                ".fchk",
+                ".molden",
+                ".molden.input",
+            ),
+            handler="orbital_diagram",
+            input_mode="paired_qc_wavefunction",
         ),
     )
 
@@ -311,6 +333,10 @@ def create_automation_plan(
     definition = _definition_map().get(str(workflow_id))
     if definition is None:
         raise AutomationValidationError(f"未知的全自动流程：{workflow_id}")
+    if definition.handler != "surface_esp":
+        raise AutomationValidationError(
+            f"{definition.name} 使用独立的配对文件工作流，请从对应流程页面启动。"
+        )
     normalized_settings = normalize_settings(settings)
 
     unique: dict[str, Path] = {}
