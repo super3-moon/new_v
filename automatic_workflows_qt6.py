@@ -53,6 +53,34 @@ SUPPORTED_INPUT_EXTENSIONS = {
 DEFAULT_WORKFLOW_ID = "surface_esp"
 DEFAULT_STYLE_ID = "esp_e3_bwr_edgyglass_443"
 
+_STAGE_LABELS = {
+    "multiwfn": "计算表面数据",
+    "cube_validation": "检查计算结果",
+    "vmd_render": "生成图片",
+    "collect": "整理结果",
+}
+_STATUS_LABELS = {
+    "pending": "等待",
+    "running": "进行中",
+    "success": "完成",
+    "completed": "完成",
+    "done": "完成",
+    "ok": "完成",
+    "failed": "失败",
+    "timeout": "超时",
+    "cancelled": "已取消",
+}
+
+
+def _stage_label(value: object, default: str = "处理中") -> str:
+    """Return user-facing progress copy without exposing internal stage keys."""
+    return _STAGE_LABELS.get(str(value or "").casefold(), default)
+
+
+def _status_label(value: object, default: str = "状态未知") -> str:
+    """Return user-facing status copy without exposing internal result tokens."""
+    return _STATUS_LABELS.get(str(value or "").casefold(), default)
+
 
 def _is_supported_input(path: Path) -> bool:
     name = path.name.casefold()
@@ -89,9 +117,7 @@ def _style_preview(style: dict, width: int, height: int) -> QPixmap:
 def _style_summary(style: dict) -> str:
     material = str(style.get("material") or "Glossy")
     if str(style.get("surface_mode") or "signed") == "signed":
-        positive = int(style.get("pos_color", 1))
-        negative = int(style.get("neg_color", 0))
-        return f"{material} · 正相位 ColorID {positive} · 负相位 ColorID {negative}"
+        return f"{material} · 正相位颜色与负相位颜色已配置"
     method = str(style.get("color_scale_method") or "BWR")
     low = float(style.get("color_scale_min", -0.03))
     high = float(style.get("color_scale_max", 0.03))
@@ -660,10 +686,10 @@ class AutomaticWorkflowsPage(QWidget):
         flow_text.setSpacing(5)
         title = QLabel("表面静电势图")
         title.setObjectName("batchCardTitle")
-        description = QLabel("自动生成电子密度与 ESP Cube，检查空间网格，套用绘图方案并由 VMD 完成渲染。")
+        description = QLabel("自动计算表面静电势数据，检查结果，应用绘图方案并生成图片。")
         description.setObjectName("batchHint")
         description.setWordWrap(True)
-        tags = QLabel("Multiwfn + VMD · 支持批量 · 自动整理结果")
+        tags = QLabel("支持批量 · 可先试运行一个文件 · 自动整理结果")
         tags.setObjectName("detailLabel")
         tags.setWordWrap(True)
         flow_text.addWidget(title)
@@ -692,11 +718,11 @@ class AutomaticWorkflowsPage(QWidget):
         orbital_title = QLabel("分子轨道能级图")
         orbital_title.setObjectName("batchCardTitle")
         orbital_description = QLabel(
-            "配对 Gaussian/ORCA 输出与 FCH/Molden，选择需要的轨道，在 VMD 中自由调整一次最终场景，随后统一用 Tachyon 渲染并自动排版。"
+            "配对 Gaussian/ORCA 输出与波函数文件，选择需要的轨道，调整一次最终外观后统一生成图片并自动排版。"
         )
         orbital_description.setObjectName("batchHint")
         orbital_description.setWordWrap(True)
-        orbital_tags = QLabel("Gaussian / ORCA · Multiwfn + VMD · 统一视角 · 自动能级排版")
+        orbital_tags = QLabel("支持 Gaussian 与 ORCA · 统一视角 · 自动能级排版")
         orbital_tags.setObjectName("detailLabel")
         orbital_tags.setWordWrap(True)
         orbital_text.addWidget(orbital_title)
@@ -778,7 +804,7 @@ class AutomaticWorkflowsPage(QWidget):
 
         style_card, style_layout = self._card(
             "2 · 选择绘图方案",
-            "绘图方案只控制骨架、材质、色带、光照等视觉设置，不会改变电子密度等值面。",
+            "绘图方案只控制骨架、材质、色带和光照等外观，不会改变上一步的计算结果。",
         )
         style_row = QHBoxLayout()
         style_row.setSpacing(14)
@@ -818,7 +844,7 @@ class AutomaticWorkflowsPage(QWidget):
 
         settings_card, settings_layout = self._card(
             "3 · 计算与输出设置",
-            "电子密度等值面会同时用于 Multiwfn 计算和 VMD 绘图，避免两端参数不一致。",
+            "电子密度等值面会同时用于数据计算和最终绘图，避免前后数值不一致。",
         )
         settings_grid = QGridLayout()
         settings_grid.setHorizontalSpacing(10)
@@ -866,15 +892,13 @@ class AutomaticWorkflowsPage(QWidget):
         settings_grid.setColumnStretch(3, 1)
         settings_layout.addLayout(settings_grid)
 
-        calculation_profile = QLabel(
-            "计算精度：电子密度使用 High 网格，ESP 使用 Low 网格；两端共用上方同一个等值面数值。"
-        )
+        calculation_profile = QLabel("计算精度已按表面静电势绘图预设，通常无需调整。")
         calculation_profile.setObjectName("batchHint")
         calculation_profile.setWordWrap(True)
         settings_layout.addWidget(calculation_profile)
 
         options = QHBoxLayout()
-        self.keep_cubes_check = QCheckBox("完成后保留电子密度与 ESP Cube")
+        self.keep_cubes_check = QCheckBox("保留计算生成的数据文件（便于再次绘图）")
         self.keep_cubes_check.setChecked(True)
         self.keep_cubes_check.toggled.connect(self._configuration_changed)
         options.addWidget(self.keep_cubes_check)
@@ -905,7 +929,7 @@ class AutomaticWorkflowsPage(QWidget):
         self.custom_height_spin.valueChanged.connect(self._configuration_changed)
         advanced_layout.addWidget(self.custom_height_spin)
         advanced_layout.addStretch(1)
-        advanced_hint = QLabel("失败或取消时始终保留 Cube 和日志，便于仅重试绘图。")
+        advanced_hint = QLabel("失败或取消时会保留诊断信息，便于继续处理。")
         advanced_hint.setObjectName("batchHint")
         advanced_hint.setWordWrap(True)
         advanced_layout.addWidget(advanced_hint)
@@ -982,7 +1006,7 @@ class AutomaticWorkflowsPage(QWidget):
         queue_layout.addLayout(run_row)
 
         self.queue_table = QTableWidget(0, 6)
-        self.queue_table.setHorizontalHeaderLabels(["#", "输入文件", "阶段", "状态", "耗时", "输出/说明"])
+        self.queue_table.setHorizontalHeaderLabels(["#", "输入文件", "当前进度", "状态", "耗时", "结果说明"])
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -1005,18 +1029,19 @@ class AutomaticWorkflowsPage(QWidget):
         self.result_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.result_preview.setFixedSize(210, 126)
         selected_row.addWidget(self.result_preview)
-        self.selected_result_label = QLabel("任务完成后，这里会显示图片位置、失败阶段和可用操作。")
+        self.selected_result_label = QLabel("任务完成后，这里会显示结果、失败环节和可用操作。")
         self.selected_result_label.setObjectName("detailLabel")
         self.selected_result_label.setWordWrap(True)
         selected_row.addWidget(self.selected_result_label, 1)
         queue_layout.addLayout(selected_row)
 
-        log_title = QLabel("运行记录")
+        log_title = QLabel("处理记录")
         log_title.setObjectName("paneTitle")
         queue_layout.addWidget(log_title)
         self.run_log = QPlainTextEdit()
         self.run_log.setObjectName("batchLog")
         self.run_log.setReadOnly(True)
+        self.run_log.setPlaceholderText("主要处理进度会显示在这里；完整诊断日志保存在结果目录。")
         self.run_log.setMaximumBlockCount(5000)
         self.run_log.setMinimumHeight(150)
         queue_layout.addWidget(self.run_log, 1)
@@ -1260,14 +1285,14 @@ class AutomaticWorkflowsPage(QWidget):
         iso = self.rho_iso_edit.text().strip() if hasattr(self, "rho_iso_edit") else "0.001"
         render_mode = self.render_mode_combo.currentData() if hasattr(self, "render_mode_combo") else "automatic"
         drawing_summary = (
-            "仅生成 Cube，不启动 VMD"
+            "仅生成表面数据，不生成图片"
             if render_mode == "cubes_only"
-            else f"VMD 套用“{style_name}” · {width} × {height}"
+            else f"使用“{style_name}”生成图片 · {width} × {height}"
         )
         self.workflow_summary_label.setText(
-            f"{count} 个文件 · Multiwfn 生成电子密度/ESP Cube → 网格检查 → "
+            f"{count} 个文件 · 计算表面数据 → 检查结果 → "
             f"{drawing_summary} · 等值面 {iso or '未填写'} a.u.\n"
-            f"{location} · {'保留 Cube' if getattr(self, 'keep_cubes_check', None) and self.keep_cubes_check.isChecked() else '成功后清理 Cube'}"
+            f"{location} · {'保留计算数据' if getattr(self, 'keep_cubes_check', None) and self.keep_cubes_check.isChecked() else '成功后清理计算数据'}"
         )
         self.config_ready_label.setText("可以运行" if count and style else ("尚未选择方案" if count else "尚未添加文件"))
 
@@ -1353,7 +1378,7 @@ class AutomaticWorkflowsPage(QWidget):
         self.retry_drawing_button.setEnabled(False)
         self.result_preview.setPixmap(QPixmap())
         self.result_preview.setText("选择一项任务后可预览图片")
-        self.selected_result_label.setText("任务完成后，这里会显示图片位置、失败阶段和可用操作。")
+        self.selected_result_label.setText("任务完成后，这里会显示结果、失败环节和可用操作。")
         self.queue_table.setRowCount(0)
         for index, path in enumerate(files, 1):
             row = self.queue_table.rowCount()
@@ -1469,10 +1494,8 @@ class AutomaticWorkflowsPage(QWidget):
             self._append_log(f"开始执行 {event.get('total', len(self._run_files))} 个自动化任务。")
             return
         if kind == "output":
-            source = str(event.get("source") or "程序")
-            text = str(event.get("text") or "")
-            if text:
-                self._append_log(f"[{source}] {text}")
+            # Full console output remains available in each task's log file.
+            # Verbatim output here obscures the progress messages users need.
             return
         if kind == "progress":
             current = int(event.get("current") or event.get("completed") or 0)
@@ -1484,26 +1507,21 @@ class AutomaticWorkflowsPage(QWidget):
             row = self._row_for_event(event)
             if row < 0:
                 return
-            stage = str(event.get("stage") or "")
-            stage_text = {
-                "multiwfn": "Multiwfn 计算",
-                "cube_validation": "Cube 校验",
-                "vmd_render": "VMD 渲染",
-                "collect": "整理结果",
-            }.get(stage, stage or "运行中")
-            status = str(event.get("status") or "running")
-            status_text = {
-                "pending": "等待",
-                "running": "进行中",
-                "success": "完成",
-                "failed": "失败",
-                "cancelled": "已取消",
-            }.get(status, status)
+            raw_status = str(event.get("status") or "running").casefold()
+            stage_text = _stage_label(event.get("stage"), "处理中")
+            status_text = _status_label(raw_status)
             self.queue_table.setItem(row, 2, QTableWidgetItem(stage_text))
             self.queue_table.setItem(row, 3, QTableWidgetItem(status_text))
-            message = str(event.get("message") or event.get("output") or "")
+            raw_message = str(event.get("message") or event.get("output") or "")
+            if raw_status in {"failed", "timeout", "cancelled"}:
+                message = raw_message or status_text
+            elif raw_status in {"success", "completed", "done", "ok"}:
+                message = f"{stage_text}完成"
+            else:
+                message = stage_text
             if message:
                 self.queue_table.setItem(row, 5, QTableWidgetItem(message))
+                self._append_log(message)
             elapsed = event.get("elapsed_seconds")
             if elapsed is not None:
                 self.queue_table.setItem(row, 4, QTableWidgetItem(f"{float(elapsed):.1f} 秒"))
@@ -1564,39 +1582,30 @@ class AutomaticWorkflowsPage(QWidget):
             file_item = self.queue_table.item(row, 1)
             if file_item is not None:
                 file_item.setData(Qt.ItemDataRole.UserRole + 1, str(job.get("id") or ""))
-            stage = str(job.get("stage") or "")
             self.queue_table.setItem(
                 row,
                 2,
-                QTableWidgetItem(
-                    {
-                        "multiwfn": "Multiwfn 计算",
-                        "cube_validation": "Cube 校验",
-                        "vmd_render": "VMD 渲染",
-                        "collect": "整理结果",
-                    }.get(stage, stage or "完成")
-                ),
+                QTableWidgetItem(_stage_label(job.get("stage"), "完成")),
             )
-            status_value = str(job.get("status") or "")
             self.queue_table.setItem(
                 row,
                 3,
-                QTableWidgetItem(
-                    {
-                        "success": "完成",
-                        "failed": "失败",
-                        "timeout": "超时",
-                        "cancelled": "已取消",
-                    }.get(status_value, status_value)
-                ),
+                QTableWidgetItem(_status_label(job.get("status"))),
             )
             self.queue_table.setItem(
                 row,
                 4,
                 QTableWidgetItem(f"{float(job.get('duration_seconds') or 0):.1f} 秒"),
             )
-            explanation = str(job.get("error") or job.get("image_path") or "完成")
-            self.queue_table.setItem(row, 5, QTableWidgetItem(explanation))
+            image_path = Path(str(job.get("image_path") or ""))
+            explanation = str(
+                job.get("error")
+                or ("图片已生成" if image_path.is_file() else "完成")
+            )
+            explanation_item = QTableWidgetItem(explanation)
+            if image_path.is_file():
+                explanation_item.setToolTip(str(image_path))
+            self.queue_table.setItem(row, 5, explanation_item)
         if self.queue_table.rowCount() and self.queue_table.currentRow() < 0:
             self.queue_table.selectRow(0)
         self._sync_selected_result()
@@ -1682,14 +1691,15 @@ class AutomaticWorkflowsPage(QWidget):
             self.result_preview.setText("尚未生成图片")
             self.open_image_button.setEnabled(False)
         error = str(job.get("error") or "")
-        failed_stage = str(job.get("failed_stage") or "")
+        failed_stage = _stage_label(job.get("failed_stage"), "")
         outputs = list(job.get("outputs") or [])
+        status_text = _status_label(job.get("status"))
         detail = (
-            f"状态：{job.get('status', '')}"
-            + (f" · 失败阶段：{failed_stage}" if failed_stage else "")
+            f"状态：{status_text}"
+            + (f" · 失败环节：{failed_stage}" if failed_stage else "")
             + (f"\n{error}" if error else "")
-            + (f"\n图片：{image_path}" if image_path.is_file() else "")
-            + (f"\n已归档 {len(outputs)} 个结果文件" if outputs else "")
+            + ("\n图片已生成，可使用上方按钮打开。" if image_path.is_file() else "")
+            + (f"\n已保存 {len(outputs)} 个结果文件。" if outputs else "")
         )
         self.selected_result_label.setText(detail)
         self.retry_drawing_button.setEnabled(
@@ -1707,7 +1717,7 @@ class AutomaticWorkflowsPage(QWidget):
             return
         job = self._selected_job_result()
         if not job or not job.get("can_retry_drawing"):
-            QMessageBox.information(self, "无法重试", "选中的任务没有可复用的 Cube 绘图结果。")
+            QMessageBox.information(self, "无法重试", "选中的任务没有可直接复用的绘图数据。")
             return
         manifest = Path(str(self.last_result.get("manifest") or ""))
         vmd_raw = self.vmd_path_getter().strip()

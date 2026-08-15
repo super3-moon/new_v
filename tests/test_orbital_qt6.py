@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -28,6 +30,19 @@ class OrbitalDiagramQtTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.fixture_directory.cleanup()
 
+    def _wait_until(self, predicate, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if predicate():
+                return
+            time.sleep(0.005)
+        self.fail("等待界面异步操作完成超时")
+
+    def _add_and_wait(self, page: OrbitalDiagramPage, paths) -> None:
+        page._add_paths(paths)
+        self._wait_until(lambda: not page.is_input_processing())
+
     def test_friendly_selector_pairing_and_per_orbital_choice(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             page = OrbitalDiagramPage(
@@ -38,11 +53,12 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             try:
                 page.resize(1080, 680)
                 page.show()
-                page._add_paths(
+                self._add_and_wait(
+                    page,
                     [
                         self.gaussian_out,
                         self.gaussian_fchk,
-                    ]
+                    ],
                 )
                 self.app.processEvents()
                 self.assertEqual(len(page.pairs), 1)
@@ -66,11 +82,12 @@ class OrbitalDiagramQtTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
             try:
-                page._add_paths(
+                self._add_and_wait(
+                    page,
                     [
                         self.gaussian_out,
                         self.gaussian_fchk,
-                    ]
+                    ],
                 )
                 page.manual_expression_edit.setText("HOMO,LUMO+1")
                 self.app.processEvents()
@@ -127,11 +144,160 @@ class OrbitalDiagramQtTests(unittest.TestCase):
                 self.assertIsNotNone(scroll)
                 assert scroll is not None
                 for combo in (page.start_offset_combo, page.end_offset_combo):
+                    self.assertTrue(combo.property("explicitDropIndicator"))
+                    indicator = combo.drop_indicator_rect()
+                    self.assertGreater(indicator.width(), 0)
+                    self.assertTrue(combo.rect().contains(indicator.center()))
                     top_left = combo.mapTo(scroll.viewport(), QPoint(0, 0))
                     self.assertGreaterEqual(top_left.x(), 0)
                     self.assertLessEqual(
                         top_left.x() + combo.width(), scroll.viewport().width()
                     )
+            finally:
+                page.close()
+
+    def test_file_parsing_is_async_and_busy_state_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            page.show()
+            original = orbital_data.parse_input_pair
+
+            def delayed_parse(*args, **kwargs):
+                time.sleep(0.18)
+                return original(*args, **kwargs)
+
+            try:
+                with mock.patch.object(
+                    orbital_data, "parse_input_pair", side_effect=delayed_parse
+                ):
+                    started = time.monotonic()
+                    page._add_paths([self.gaussian_out, self.gaussian_fchk])
+                    elapsed = time.monotonic() - started
+                    self.assertLess(elapsed, 0.08)
+                    self.assertTrue(page.is_input_processing())
+                    self.assertFalse(page.input_progress.isHidden())
+                    self.assertEqual(page.input_progress.maximum(), 0)
+                    self.assertFalse(page.add_input_button.isEnabled())
+
+                    # The GUI event queue is still serviced while the worker
+                    # is deliberately held in a slow parser call.
+                    page.ready_label.setText("界面仍可响应")
+                    self.app.processEvents()
+                    self.assertEqual(page.ready_label.text(), "界面仍可响应")
+                    self._wait_until(lambda: not page.is_input_processing())
+
+                self.assertEqual(page.pair_validity, [True])
+                self.assertTrue(page.add_input_button.isEnabled())
+                self.assertTrue(page.input_progress.isHidden())
+                self.assertIn("读取完成", page.input_progress_label.text())
+            finally:
+                self._wait_until(lambda: not page.is_input_processing())
+                page.close()
+
+    def test_stale_input_worker_result_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                page._input_generation = 9
+                page._on_input_worker_finished(
+                    8,
+                    {
+                        "input_files": [self.gaussian_out],
+                        "pairs": ["stale"],
+                        "datasets": ["stale"],
+                        "pair_validity": [True],
+                    },
+                    None,
+                )
+                self.assertEqual(page.input_files, [])
+                self.assertEqual(page.pairs, [])
+                self.assertEqual(page.ready_label.text(), "尚未添加输入")
+            finally:
+                page.close()
+
+    def test_cleanup_cancels_and_joins_input_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            original = orbital_data.parse_input_pair
+
+            def delayed_parse(*args, **kwargs):
+                time.sleep(0.05)
+                return original(*args, **kwargs)
+
+            with mock.patch.object(
+                orbital_data, "parse_input_pair", side_effect=delayed_parse
+            ):
+                page._add_paths([self.gaussian_out, self.gaussian_fchk])
+                self.assertTrue(page.is_running())
+                page.cleanup()
+            self.assertIsNone(page.input_thread)
+            self.assertIsNone(page.input_worker)
+            self.assertFalse(page.is_running())
+            page.close()
+
+    def test_console_output_is_hidden_and_stages_are_friendly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pair = orbital_data.InputPair(
+                self.gaussian_out,
+                self.gaussian_fchk,
+                orbital_data.CalculationProgram.GAUSSIAN,
+            )
+            page = OrbitalDiagramPage(root, lambda: "", lambda: "")
+            try:
+                page._active_pairs = [pair]
+                page._populate_queue([pair], ["job-1"])
+                before_stage = page.queue_table.item(0, 2).text()
+                page._on_worker_event(
+                    {
+                        "kind": "output",
+                        "stage": "output",
+                        "job_id": "job-1",
+                        "text": "[VMD Info] internal console line",
+                    }
+                )
+                self.assertEqual(page.queue_table.item(0, 2).text(), before_stage)
+                self.assertNotIn("internal console", page.run_log.toPlainText())
+
+                page._on_worker_event(
+                    {
+                        "kind": "job_started",
+                        "stage": "unknown_internal_stage",
+                        "status": "unknown_internal_status",
+                        "job_id": "job-1",
+                        "message": "任务已开始",
+                    }
+                )
+                self.assertEqual(page.queue_table.item(0, 2).text(), "处理中")
+                self.assertEqual(page.queue_table.item(0, 3).text(), "状态未知")
+
+                page._on_worker_finished(
+                    {
+                        "run_dir": str(root),
+                        "jobs": [
+                            {
+                                "id": "job-1",
+                                "status": "success",
+                                "stage": "output",
+                                "pair": {
+                                    "wavefunction_path": str(self.gaussian_fchk)
+                                },
+                            }
+                        ],
+                    },
+                    None,
+                )
+                self.assertEqual(page.queue_table.item(0, 2).text(), "完成")
+
+                visible_text = "\n".join(
+                    label.text() for label in page.findChildren(QLabel)
+                )
+                headers = "\n".join(
+                    page.orbital_table.horizontalHeaderItem(column).text()
+                    for column in range(page.orbital_table.columnCount())
+                )
+                for internal_word in ("signed", "ColorID", "Multiwfn 号", "来源号"):
+                    self.assertNotIn(internal_word, visible_text + headers)
             finally:
                 page.close()
 
@@ -213,7 +379,9 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             )
             page = OrbitalDiagramPage(root, lambda: "", lambda: "")
             try:
-                page._add_paths([first_out, first_fchk, second_out, second_fchk])
+                self._add_and_wait(
+                    page, [first_out, first_fchk, second_out, second_fchk]
+                )
                 self.assertTrue(page.unpaired_issue)
                 selection = page.input_table.selectionModel()
                 flags = (
@@ -223,7 +391,7 @@ class OrbitalDiagramQtTests(unittest.TestCase):
                 selection.select(page.input_table.model().index(0, 0), flags)
                 selection.select(page.input_table.model().index(1, 0), flags)
                 page._manual_pair_selected()
-                self.app.processEvents()
+                self._wait_until(lambda: not page.is_input_processing())
                 self.assertEqual(len(page.manual_pairs), 1)
                 self.assertEqual(len(page.pairs), 2)
                 self.assertFalse(page.unpaired_issue)
@@ -236,7 +404,7 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             root = Path(temporary)
             first = OrbitalDiagramPage(root, lambda: "", lambda: "")
             try:
-                first._add_paths([self.gaussian_out, self.gaussian_fchk])
+                self._add_and_wait(first, [self.gaussian_out, self.gaussian_fchk])
                 first.orbital_table.item(0, 1).setCheckState(Qt.CheckState.Unchecked)
                 saved = first._settings()
             finally:
@@ -244,7 +412,7 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             second = OrbitalDiagramPage(root, lambda: "", lambda: "")
             try:
                 second.load_settings({"orbital_diagram_settings": saved})
-                second._add_paths([self.gaussian_out, self.gaussian_fchk])
+                self._add_and_wait(second, [self.gaussian_out, self.gaussian_fchk])
                 self.assertEqual(
                     second.orbital_table.item(0, 1).checkState(),
                     Qt.CheckState.Unchecked,

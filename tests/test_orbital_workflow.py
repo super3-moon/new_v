@@ -416,11 +416,34 @@ class OrbitalVmdTests(unittest.TestCase):
             self.assertIn("MATERIAL", script)
             self.assertIn("REP", script)
             self.assertIn("MolecularStudio managed native state", script)
+            self.assertIn("display reposition 32 40", script)
             self.assertIn("set ::MO_CANCEL_PATH", script)
             self.assertIn("set ::MO_ERROR_PATH", script)
             self.assertIn("_mo_write_marker $::MO_CANCEL_PATH cancelled", script)
             self.assertNotIn("    quit\n", script)
             self.assertNotIn("    exit\n", script)
+
+    def test_vmd_orbital_artifact_names_are_ascii_only(self) -> None:
+        ref = orbital_data.OrbitalRef(
+            spin=orbital_data.SpinChannel.ALPHA,
+            channel_index=267,
+            global_index=267,
+            energy_hartree=-0.25,
+            energy_ev=-6.802846,
+            occupation=1.0,
+            label="α-HOMO-1",
+        )
+        stem = workflow._orbital_artifact_stem(ref)
+        self.assertEqual(stem, "alpha_000267_000267")
+        self.assertTrue(stem.isascii())
+        self.assertNotIn("α", stem)
+
+    def test_interactive_vmd_viewport_is_not_the_render_resolution(self) -> None:
+        self.assertEqual(workflow.INTERACTIVE_VMD_VIEWPORT, (1160, 640))
+        settings = workflow.OrbitalDiagramSettings.from_value(
+            {"width": 1600, "height": 1200, "style_snapshot": signed_style_snapshot()}
+        )
+        self.assertEqual((settings.width, settings.height), (1600, 1200))
 
     def test_capture_marker_paths_are_paired_without_replacing_suffix(self) -> None:
         state = Path("work") / "viewpoint.capture"

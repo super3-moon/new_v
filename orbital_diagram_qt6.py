@@ -12,8 +12,16 @@ from typing import Any, Callable, Iterable
 
 import orbital_data
 import vmd_style_tool as core
-from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QIntValidator, QPixmap
+from PySide6.QtCore import QObject, QPoint, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QIntValidator,
+    QPainter,
+    QPalette,
+    QPixmap,
+    QPolygon,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -98,6 +106,220 @@ def _as_dict(value: object) -> dict[str, Any]:
     return {}
 
 
+class OrbitalOffsetComboBox(QComboBox):
+    """Editable offset selector with a drop indicator painted by this widget.
+
+    The host application has theme rules for combo boxes.  Relying on the
+    platform/theme arrow made the editable HOMO/LUMO selectors look like plain
+    text fields on some Windows installations, so this small indicator is
+    deliberately drawn after the normal combo box paint pass.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("explicitDropIndicator", True)
+
+    def drop_indicator_rect(self):
+        width = 18
+        return self.rect().adjusted(self.width() - width, 0, -2, 0)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        rect = self.drop_indicator_rect()
+        center = rect.center()
+        color_role = (
+            QPalette.ColorRole.Text
+            if self.isEnabled()
+            else QPalette.ColorRole.PlaceholderText
+        )
+        color = QColor(self.palette().color(color_role))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawPolygon(
+            QPolygon(
+                [
+                    QPoint(center.x() - 4, center.y() - 2),
+                    QPoint(center.x() + 4, center.y() - 2),
+                    QPoint(center.x(), center.y() + 3),
+                ]
+            )
+        )
+
+
+class _InputProcessingCancelled(Exception):
+    pass
+
+
+class OrbitalInputWorker(QObject):
+    """Expand, pair and parse uploaded files away from the GUI thread."""
+
+    progress = Signal(int, str, int, int)
+    finished = Signal(int, object, object)
+
+    def __init__(
+        self,
+        generation: int,
+        source_paths: list[Path],
+        manual_pairs: list[orbital_data.InputPair],
+    ) -> None:
+        super().__init__()
+        self.generation = int(generation)
+        self.source_paths = [Path(path) for path in source_paths]
+        self.manual_pairs = list(manual_pairs)
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        self._cancel_requested = True
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_requested:
+            raise _InputProcessingCancelled()
+
+    def _expand_paths(self) -> list[Path]:
+        result: list[Path] = []
+        for raw_index, raw in enumerate(self.source_paths, start=1):
+            self._check_cancelled()
+            path = Path(raw).expanduser()
+            self.progress.emit(
+                self.generation,
+                f"正在查找文件：{path.name or path}",
+                raw_index - 1,
+                0,
+            )
+            if path.is_dir():
+                try:
+                    for item in path.rglob("*"):
+                        self._check_cancelled()
+                        if _is_supported_file(item):
+                            result.append(item)
+                except OSError:
+                    continue
+            elif _is_supported_file(path):
+                result.append(path)
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for path in result:
+            self._check_cancelled()
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            key = os.path.normcase(str(resolved))
+            if key not in seen:
+                seen.add(key)
+                unique.append(resolved)
+        return unique
+
+    @staticmethod
+    def _validation_text(
+        pair: orbital_data.InputPair,
+        dataset: orbital_data.OrbitalDataset | None,
+        error: Exception | None,
+    ) -> tuple[bool, str]:
+        if error is not None:
+            return False, f"读取失败：{error}"
+        validation = dataset.pair_validation if dataset is not None else None
+        valid = bool(validation and validation.is_valid)
+        warnings = list(pair.warnings)
+        if validation:
+            warnings.extend(validation.warnings)
+        if valid:
+            text = "核验通过"
+            if warnings:
+                text += f"；请留意：{'；'.join(warnings)}"
+            return True, text
+        errors = list(validation.errors) if validation else ["没有获得核验结果"]
+        return False, f"核验失败：{'；'.join(errors)}"
+
+    def _process(self) -> dict[str, Any]:
+        input_files = self._expand_paths()
+        self._check_cancelled()
+        available = {os.path.normcase(str(path)) for path in input_files}
+        manual_pairs = [
+            pair
+            for pair in self.manual_pairs
+            if os.path.normcase(str(pair.output_path)) in available
+            and os.path.normcase(str(pair.wavefunction_path)) in available
+        ]
+        manual_paths = {
+            os.path.normcase(str(path))
+            for pair in manual_pairs
+            for path in (pair.output_path, pair.wavefunction_path)
+        }
+        remaining = [
+            path
+            for path in input_files
+            if os.path.normcase(str(path)) not in manual_paths
+        ]
+        pairs = list(manual_pairs)
+        unpaired_issue = ""
+        if remaining:
+            try:
+                pairs.extend(orbital_data.pair_input_files(remaining))
+            except orbital_data.OrbitalDataError as exc:
+                unpaired_issue = str(exc)
+        self._check_cancelled()
+
+        datasets: list[orbital_data.OrbitalDataset | None] = []
+        validities: list[bool] = []
+        validation_texts: list[str] = []
+        total = len(pairs)
+        for index, pair in enumerate(pairs, start=1):
+            self._check_cancelled()
+            self.progress.emit(
+                self.generation,
+                f"正在读取 {index}/{total}：{pair.label}",
+                index - 1,
+                total,
+            )
+            dataset: orbital_data.OrbitalDataset | None = None
+            parse_error: Exception | None = None
+            try:
+                dataset = orbital_data.parse_input_pair(
+                    pair.output_path,
+                    pair.wavefunction_path,
+                    strict=False,
+                )
+            except orbital_data.OrbitalDataError as exc:
+                parse_error = exc
+            valid, validation_text = self._validation_text(
+                pair, dataset, parse_error
+            )
+            datasets.append(dataset)
+            validities.append(valid)
+            validation_texts.append(validation_text)
+            self.progress.emit(
+                self.generation,
+                f"已读取 {index}/{total}：{pair.label}",
+                index,
+                total,
+            )
+        return {
+            "input_files": input_files,
+            "manual_pairs": manual_pairs,
+            "pairs": pairs,
+            "datasets": datasets,
+            "pair_validity": validities,
+            "validation_texts": validation_texts,
+            "unpaired_issue": unpaired_issue,
+        }
+
+    @Slot()
+    def run(self) -> None:
+        result: object = None
+        error: object = None
+        try:
+            result = self._process()
+        except _InputProcessingCancelled:
+            result = {"cancelled": True}
+        except Exception as exc:
+            error = exc
+        self.finished.emit(self.generation, result, error)
+
+
 class OrbitalInputTable(QTableWidget):
     pathsDropped = Signal(object)
 
@@ -157,7 +379,7 @@ class _SignedStyleDialog(QDialog):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(12)
         hint = QLabel(
-            "这里只列出具有正、负相位配色的 signed 方案。它是 VMD 打开时的初始外观。"
+            "这里只列出具有正、负相位配色的绘图方案。它是 VMD 打开时的初始外观。"
         )
         hint.setObjectName("batchHint")
         hint.setWordWrap(True)
@@ -196,12 +418,11 @@ class _SignedStyleDialog(QDialog):
     def _sync_summary(self) -> None:
         style = self._current_style()
         if not style:
-            self.summary.setText("没有可用的 signed 绘图方案。")
+            self.summary.setText("没有可用的正负相位绘图方案。")
             return
         self.summary.setText(
-            f"正相位 ColorID {int(style.get('pos_color', 1))} · "
-            f"负相位 ColorID {int(style.get('neg_color', 0))} · "
-            f"材质 {style.get('material') or 'Glossy'}"
+            "正负相位颜色已配置 · "
+            f"材质：{style.get('material') or 'Glossy'}"
         )
 
     def selection(self) -> dict[str, Any]:
@@ -386,6 +607,10 @@ class OrbitalDiagramPage(QWidget):
         self._saved_orbital_selections: list[dict[str, Any]] = []
         self._restore_selection_pending = False
         self._loading_settings = False
+        self.input_thread: QThread | None = None
+        self.input_worker: OrbitalInputWorker | None = None
+        self._input_generation = 0
+        self._input_busy = False
         self._build_ui()
         self._select_default_style()
         self._refresh_selection_preview()
@@ -463,26 +688,44 @@ class OrbitalDiagramPage(QWidget):
             "拖入或添加 Gaussian out/log + fch/fchk，或 ORCA out + molden/molden.input。软件会按程序与文件名自动配对，再核验终止状态、体系和轨道数据。",
         )
         input_actions = QHBoxLayout()
-        add_button = QPushButton("添加文件")
-        add_button.clicked.connect(self._browse_files)
-        folder_button = QPushButton("扫描文件夹")
-        folder_button.clicked.connect(self._browse_folder)
-        manual_pair_button = QPushButton("配对选中的两个文件")
-        manual_pair_button.clicked.connect(self._manual_pair_selected)
-        remove_button = QPushButton("移除选中")
-        remove_button.clicked.connect(self._remove_selected_files)
-        clear_button = QPushButton("清空")
-        clear_button.clicked.connect(self._clear_files)
-        input_actions.addWidget(add_button)
-        input_actions.addWidget(folder_button)
-        input_actions.addWidget(manual_pair_button)
-        input_actions.addWidget(remove_button)
-        input_actions.addWidget(clear_button)
+        self.add_input_button = QPushButton("添加文件")
+        self.add_input_button.clicked.connect(self._browse_files)
+        self.add_folder_button = QPushButton("扫描文件夹")
+        self.add_folder_button.clicked.connect(self._browse_folder)
+        self.manual_pair_button = QPushButton("配对选中的两个文件")
+        self.manual_pair_button.clicked.connect(self._manual_pair_selected)
+        self.remove_input_button = QPushButton("移除选中")
+        self.remove_input_button.clicked.connect(self._remove_selected_files)
+        self.clear_input_button = QPushButton("清空")
+        self.clear_input_button.clicked.connect(self._clear_files)
+        input_actions.addWidget(self.add_input_button)
+        input_actions.addWidget(self.add_folder_button)
+        input_actions.addWidget(self.manual_pair_button)
+        input_actions.addWidget(self.remove_input_button)
+        input_actions.addWidget(self.clear_input_button)
         input_actions.addStretch(1)
         self.input_count_label = QLabel("0 个文件")
         self.input_count_label.setObjectName("countPill")
         input_actions.addWidget(self.input_count_label)
         input_layout.addLayout(input_actions)
+        input_progress_row = QHBoxLayout()
+        self.input_progress_label = QLabel("等待添加文件")
+        self.input_progress_label.setObjectName("batchHint")
+        self.input_progress_label.setWordWrap(True)
+        input_progress_row.addWidget(self.input_progress_label, 1)
+        self.input_progress = QProgressBar()
+        self.input_progress.setObjectName("orbitalInputProgress")
+        self.input_progress.setRange(0, 1)
+        self.input_progress.setValue(0)
+        self.input_progress.setTextVisible(True)
+        self.input_progress.setMinimumWidth(210)
+        self.input_progress.hide()
+        input_progress_row.addWidget(self.input_progress)
+        self.cancel_input_button = QPushButton("停止读取")
+        self.cancel_input_button.clicked.connect(self._cancel_input_processing)
+        self.cancel_input_button.hide()
+        input_progress_row.addWidget(self.cancel_input_button)
+        input_layout.addLayout(input_progress_row)
         self.input_table = OrbitalInputTable()
         self.input_table.pathsDropped.connect(self._add_paths)
         input_layout.addWidget(self.input_table)
@@ -554,16 +797,16 @@ class OrbitalDiagramPage(QWidget):
         quick_grid.setColumnStretch(1, 1)
         select_layout.addLayout(quick_grid)
 
-        self.orbital_table = QTableWidget(0, 8)
+        self.orbital_table = QTableWidget(0, 6)
         self.orbital_table.setHorizontalHeaderLabels(
-            ["文件", "绘制", "自旋", "标签", "来源号", "Multiwfn 号", "占据", "能量 / eV"]
+            ["文件", "绘制", "自旋", "轨道", "占据数", "能量 / eV"]
         )
         self.orbital_table.verticalHeader().setVisible(False)
         self.orbital_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.orbital_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self.orbital_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in range(1, 8):
+        for column in range(1, 6):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.orbital_table.setMinimumHeight(210)
         self.orbital_table.itemChanged.connect(self._orbital_check_changed)
@@ -576,11 +819,11 @@ class OrbitalDiagramPage(QWidget):
 
         style_card, style_layout = self._card(
             "3 · 初始绘图方案与 VMD 交互",
-            "分子轨道只使用有正、负相位配色的 signed 绘图方案。",
+            "分子轨道使用带正、负相位配色的绘图方案。",
         )
         style_row = QHBoxLayout()
         style_text = QVBoxLayout()
-        self.style_name_label = QLabel("正在载入 signed 绘图方案……")
+        self.style_name_label = QLabel("正在载入绘图方案……")
         self.style_name_label.setObjectName("workflowStyleName")
         self.style_name_label.setWordWrap(True)
         self.style_detail_label = QLabel()
@@ -711,7 +954,7 @@ class OrbitalDiagramPage(QWidget):
         )
         self.queue_table = QTableWidget(0, 6)
         self.queue_table.setHorizontalHeaderLabels(
-            ["任务", "程序", "阶段", "状态", "耗时", "结果 / 错误"]
+            ["任务", "文件类型", "当前进度", "状态", "耗时", "结果 / 说明"]
         )
         self.queue_table.verticalHeader().setVisible(False)
         self.queue_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -739,7 +982,7 @@ class OrbitalDiagramPage(QWidget):
         self.run_log = QPlainTextEdit()
         self.run_log.setReadOnly(True)
         self.run_log.setMaximumBlockCount(3000)
-        self.run_log.setPlaceholderText("队列日志会显示在这里")
+        self.run_log.setPlaceholderText("关键运行进度会显示在这里；完整日志保存在结果目录。")
         self.run_log.setMinimumHeight(230)
         preview_row.addWidget(self.run_log, 4)
         queue_layout.addLayout(preview_row)
@@ -797,15 +1040,13 @@ class OrbitalDiagramPage(QWidget):
     def _sync_style_card(self) -> None:
         style = self.style_snapshot.get("style") or {}
         if not style:
-            self.style_name_label.setText("没有可用的 signed 绘图方案")
+            self.style_name_label.setText("没有可用的正负相位绘图方案")
             self.style_detail_label.setText("请检查绘图方案库。")
             return
         self.style_name_label.setText(str(style.get("name") or "未命名方案"))
         self.style_detail_label.setText(
-            f"{self.style_snapshot.get('selection_text') or ''} · "
-            f"正相位 ColorID {int(style.get('pos_color', 1))} · "
-            f"负相位 ColorID {int(style.get('neg_color', 0))} · "
-            f"材质 {style.get('material') or 'Glossy'}"
+            "正负相位颜色已配置 · "
+            f"材质：{style.get('material') or 'Glossy'}"
         )
 
     def _choose_style(self) -> None:
@@ -845,7 +1086,7 @@ class OrbitalDiagramPage(QWidget):
             return
         style = selection.get("style")
         if not isinstance(style, dict) or str(style.get("surface_mode") or "signed") != "signed":
-            QMessageBox.warning(self, "方案不兼容", "分子轨道只能使用 signed 正负相位绘图方案。")
+            QMessageBox.warning(self, "方案不兼容", "分子轨道只能使用正负相位绘图方案。")
             return
         selection = copy.deepcopy(selection)
         selection["hash"] = _style_hash(selection)
@@ -868,40 +1109,20 @@ class OrbitalDiagramPage(QWidget):
         if directory:
             self._add_paths([Path(directory)])
 
-    def _expanded_paths(self, paths: Iterable[Path]) -> list[Path]:
-        result: list[Path] = []
-        for raw in paths:
-            path = Path(raw).expanduser()
-            if path.is_dir():
-                try:
-                    result.extend(item for item in path.rglob("*") if _is_supported_file(item))
-                except OSError:
-                    continue
-            elif _is_supported_file(path):
-                result.append(path)
-        return result
-
     @Slot(object)
     def _add_paths(self, paths: object) -> None:
-        if self.is_running():
+        if self.is_input_processing():
+            QMessageBox.information(self, "正在读取文件", "请等待当前文件读取完成，或先停止读取。")
+            return
+        if self._workflow_is_running():
             QMessageBox.information(self, "任务运行中", "请先停止当前任务，再修改输入。")
             return
         raw_paths = paths if isinstance(paths, (list, tuple)) else [paths]
-        supported = self._expanded_paths([Path(item) for item in raw_paths if item])
-        existing = {os.path.normcase(str(path)) for path in self.input_files}
-        for path in supported:
-            try:
-                resolved = path.resolve()
-            except OSError:
-                resolved = path
-            key = os.path.normcase(str(resolved))
-            if key not in existing:
-                self.input_files.append(resolved)
-                existing.add(key)
-        self._refresh_inputs()
+        sources = [*self.input_files, *[Path(item) for item in raw_paths if item]]
+        self._begin_input_processing(sources, self.manual_pairs)
 
     def _remove_selected_files(self) -> None:
-        if self.is_running():
+        if self.is_running() or self.is_input_processing():
             return
         rows = sorted({index.row() for index in self.input_table.selectedIndexes()}, reverse=True)
         for row in rows:
@@ -914,16 +1135,21 @@ class OrbitalDiagramPage(QWidget):
             if os.path.normcase(str(pair.output_path)) in remaining
             and os.path.normcase(str(pair.wavefunction_path)) in remaining
         ]
-        self._refresh_inputs()
+        if self.input_files:
+            self._begin_input_processing(self.input_files, self.manual_pairs)
+        else:
+            self._show_empty_inputs()
 
     def _clear_files(self) -> None:
-        if self.is_running():
+        if self.is_running() or self.is_input_processing():
             return
         self.input_files.clear()
         self.manual_pairs.clear()
-        self._refresh_inputs()
+        self._show_empty_inputs()
 
     def _manual_pair_selected(self) -> None:
+        if self.is_input_processing():
+            return
         rows = sorted({index.row() for index in self.input_table.selectedIndexes()})
         if len(rows) != 2:
             QMessageBox.information(
@@ -954,18 +1180,6 @@ class OrbitalDiagramPage(QWidget):
             if wavefunction.name.casefold().endswith((".fch", ".fchk"))
             else orbital_data.CalculationProgram.ORCA
         )
-        try:
-            actual = orbital_data.parse_output_file(output).program
-        except orbital_data.OrbitalDataError as exc:
-            QMessageBox.warning(self, "无法读取输出文件", str(exc))
-            return
-        if actual is not expected:
-            QMessageBox.warning(
-                self,
-                "程序类型不一致",
-                "Gaussian 输出应配 FCH/FCHK；ORCA 输出应配 Molden 文件。",
-            )
-            return
         selected_keys = {
             os.path.normcase(str(output.resolve())),
             os.path.normcase(str(wavefunction.resolve())),
@@ -985,10 +1199,10 @@ class OrbitalDiagramPage(QWidget):
                 output,
                 wavefunction,
                 expected,
-                pairing_reason="user confirmed pair",
+                pairing_reason="用户指定配对",
             )
         )
-        self._pair_and_parse_inputs()
+        self._begin_input_processing(self.input_files, self.manual_pairs)
 
     @staticmethod
     def _input_kind(path: Path) -> str:
@@ -999,7 +1213,7 @@ class OrbitalDiagramPage(QWidget):
             return "ORCA 波函数"
         return "输出日志"
 
-    def _refresh_inputs(self) -> None:
+    def _render_input_table(self) -> None:
         self.input_table.setRowCount(0)
         for path in self.input_files:
             row = self.input_table.rowCount()
@@ -1010,76 +1224,158 @@ class OrbitalDiagramPage(QWidget):
             self.input_table.setItem(row, 1, item)
             self.input_table.setItem(row, 2, QTableWidgetItem(str(path.parent)))
         self.input_count_label.setText(f"{len(self.input_files)} 个文件")
-        self._pair_and_parse_inputs()
 
-    def _pair_and_parse_inputs(self) -> None:
+    def _show_empty_inputs(self) -> None:
+        self._input_generation += 1
+        self._render_input_table()
         self.pairs = []
         self.datasets = []
         self.pair_validity = []
+        self.unpaired_issue = ""
+        self.pair_table.setRowCount(0)
+        self.pair_status_label.setText("请至少添加一组配套文件。")
+        self.ready_label.setText("尚未添加输入")
+        self.input_progress_label.setText("等待添加文件")
+        self._refresh_selection_preview()
+        self._configuration_changed()
+
+    def is_input_processing(self) -> bool:
+        return self._input_busy
+
+    def _set_input_busy(self, busy: bool, message: str = "") -> None:
+        self._input_busy = bool(busy)
+        for widget in (
+            self.add_input_button,
+            self.add_folder_button,
+            self.manual_pair_button,
+            self.remove_input_button,
+            self.clear_input_button,
+        ):
+            widget.setEnabled(not busy)
+        self.input_table.setAcceptDrops(not busy)
+        self.cancel_input_button.setVisible(busy)
+        self.cancel_input_button.setEnabled(busy)
+        self.input_progress.setVisible(busy)
+        if busy:
+            self.input_progress.setRange(0, 0)
+            self.input_progress_label.setText(message or "正在读取并核验文件……")
+            self.pair_status_label.setText("正在读取并核验文件，请稍候。")
+            self.ready_label.setText("正在读取")
+        if hasattr(self, "start_button"):
+            self.start_button.setEnabled(not busy and not self._workflow_is_running())
+
+    def _begin_input_processing(
+        self,
+        source_paths: Iterable[Path],
+        manual_pairs: Iterable[orbital_data.InputPair],
+    ) -> None:
+        if self.input_thread is not None and self.input_thread.isRunning():
+            return
+        self._input_generation += 1
+        generation = self._input_generation
+        thread = QThread(self)
+        worker = OrbitalInputWorker(
+            generation,
+            [Path(path) for path in source_paths],
+            list(manual_pairs),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_input_progress)
+        worker.finished.connect(self._on_input_worker_finished)
+        worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(
+            lambda target=thread: self._on_input_thread_finished(target)
+        )
+        thread.finished.connect(thread.deleteLater)
+        self.input_thread = thread
+        self.input_worker = worker
+        self._set_input_busy(True)
+        thread.start()
+
+    @Slot(int, str, int, int)
+    def _on_input_progress(
+        self, generation: int, message: str, current: int, total: int
+    ) -> None:
+        if generation != self._input_generation:
+            return
+        self.input_progress_label.setText(message)
+        if total > 0:
+            self.input_progress.setRange(0, total)
+            self.input_progress.setValue(max(0, min(current, total)))
+        else:
+            self.input_progress.setRange(0, 0)
+
+    @Slot(int, object, object)
+    def _on_input_worker_finished(
+        self, generation: int, result: object, error: object
+    ) -> None:
+        if generation != self._input_generation:
+            return
+        if error is not None:
+            self._set_input_busy(False)
+            self.input_progress_label.setText(f"文件读取失败：{error}")
+            self.pair_status_label.setText("文件读取失败，请检查文件是否完整后重试。")
+            self.ready_label.setText("读取失败")
+            return
+        payload = result if isinstance(result, dict) else {}
+        if payload.get("cancelled"):
+            self._set_input_busy(False)
+            self.input_progress_label.setText("已停止读取")
+            self.ready_label.setText(
+                f"{sum(self.pair_validity)} 组输入就绪"
+                if self.pairs
+                else "尚未添加输入"
+            )
+            return
+        self._apply_input_result(payload)
+        self._set_input_busy(False)
+
+    def _on_input_thread_finished(self, target: QThread) -> None:
+        if target is not self.input_thread:
+            return
+        self.input_thread = None
+        self.input_worker = None
+        if self._input_busy:
+            self._set_input_busy(False)
+            self.input_progress_label.setText("已停止读取")
+
+    def _cancel_input_processing(self) -> None:
+        if not self.is_input_processing():
+            return
+        self._input_generation += 1
+        if self.input_worker is not None:
+            self.input_worker.cancel()
+        self.cancel_input_button.setEnabled(False)
+        self.input_progress_label.setText("正在停止读取……")
+
+    def _apply_input_result(self, payload: dict[str, Any]) -> None:
+        self.input_files = list(payload.get("input_files") or [])
+        self.manual_pairs = list(payload.get("manual_pairs") or [])
+        self.pairs = list(payload.get("pairs") or [])
+        self.datasets = list(payload.get("datasets") or [])
+        self.pair_validity = [bool(value) for value in payload.get("pair_validity") or []]
+        self.unpaired_issue = str(payload.get("unpaired_issue") or "")
+        validation_texts = [str(value) for value in payload.get("validation_texts") or []]
+        self._render_input_table()
         self.pair_table.setRowCount(0)
         if not self.input_files:
-            self.pair_status_label.setText("请至少添加一组配套文件。")
-            self.ready_label.setText("尚未添加输入")
-            self._refresh_selection_preview()
-            self._configuration_changed()
+            self._show_empty_inputs()
             return
-        manual_paths = {
-            os.path.normcase(str(path))
-            for pair in self.manual_pairs
-            for path in (pair.output_path, pair.wavefunction_path)
-        }
-        remaining = [
-            path
-            for path in self.input_files
-            if os.path.normcase(str(path)) not in manual_paths
-        ]
-        self.pairs = list(self.manual_pairs)
-        self.unpaired_issue = ""
-        if remaining:
-            try:
-                self.pairs.extend(orbital_data.pair_input_files(remaining))
-            except orbital_data.OrbitalDataError as exc:
-                self.unpaired_issue = str(exc)
         if not self.pairs:
-            self.pair_status_label.setText(
-                f"尚未形成完整且唯一的配对：{self.unpaired_issue}"
-            )
+            detail = self.unpaired_issue or "请同时添加计算输出和对应的波函数文件。"
+            self.pair_status_label.setText(f"尚未形成完整配对：{detail}")
             self.ready_label.setText("等待完整配对")
+            self.input_progress_label.setText(
+                f"已读取 {len(self.input_files)} 个文件，等待补充配套文件"
+            )
             self._refresh_selection_preview()
             self._configuration_changed()
             return
 
         messages: list[str] = []
-        for pair in self.pairs:
-            dataset: orbital_data.OrbitalDataset | None = None
-            valid = False
-            validation_text = ""
-            try:
-                dataset = orbital_data.parse_input_pair(
-                    pair.output_path,
-                    pair.wavefunction_path,
-                    strict=False,
-                )
-                validation = dataset.pair_validation
-                valid = bool(validation and validation.is_valid)
-                warnings = list(pair.warnings)
-                if validation:
-                    warnings.extend(validation.warnings)
-                if valid:
-                    validation_text = "核验通过"
-                    if warnings:
-                        validation_text += f"；警告：{'；'.join(warnings)}"
-                else:
-                    errors = list(validation.errors) if validation else ["核验报告缺失"]
-                    validation_text = f"核验失败：{'；'.join(errors)}"
-            except orbital_data.OrbitalDataError as exc:
-                validation_text = f"解析失败：{exc}"
-            if dataset is not None:
-                self.datasets.append(dataset)
-            else:
-                self.datasets.append(None)  # type: ignore[arg-type]
-            self.pair_validity.append(valid)
-
+        for pair, validation_text in zip(self.pairs, validation_texts):
             row = self.pair_table.rowCount()
             self.pair_table.insertRow(row)
             self.pair_table.setItem(row, 0, QTableWidgetItem(pair.label))
@@ -1107,8 +1403,22 @@ class OrbitalDiagramPage(QWidget):
             if valid_count != len(self.pairs)
             else f"{valid_count} 组输入就绪"
         )
+        self.input_progress_label.setText(
+            f"读取完成：{len(self.input_files)} 个文件，{len(self.pairs)} 组任务"
+        )
         self._refresh_selection_preview()
         self._configuration_changed()
+
+    # Kept as a compatibility entry point for callers from older hosts.  The
+    # operation is now asynchronous just like file picker and drag-and-drop.
+    def _refresh_inputs(self) -> None:
+        if self.input_files:
+            self._begin_input_processing(self.input_files, self.manual_pairs)
+        else:
+            self._show_empty_inputs()
+
+    def _pair_and_parse_inputs(self) -> None:
+        self._refresh_inputs()
 
     @staticmethod
     def _frontier_text(anchor: str, offset: int) -> str:
@@ -1117,7 +1427,7 @@ class OrbitalDiagramPage(QWidget):
     def _make_offset_combo(self, value: int, anchor: str) -> QComboBox:
         """Create the compact, editable offset selector used after HOMO/LUMO."""
 
-        combo = QComboBox()
+        combo = OrbitalOffsetComboBox()
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         combo.setSizeAdjustPolicy(
@@ -1135,6 +1445,7 @@ class OrbitalDiagramPage(QWidget):
             editor.setValidator(QIntValidator(-50, 50, editor))
             editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
             editor.setPlaceholderText("0")
+            editor.setTextMargins(0, 0, 18, 0)
             editor.editingFinished.connect(
                 lambda target=combo, default=value: self._normalize_offset_combo(
                     target, default
@@ -1280,10 +1591,8 @@ class OrbitalDiagramPage(QWidget):
                 }.get(ref.spin.value, ref.spin.value)
                 self.orbital_table.setItem(row, 2, QTableWidgetItem(spin_text))
                 self.orbital_table.setItem(row, 3, QTableWidgetItem(ref.label))
-                self.orbital_table.setItem(row, 4, QTableWidgetItem(str(ref.channel_index)))
-                self.orbital_table.setItem(row, 5, QTableWidgetItem(str(ref.global_index)))
-                self.orbital_table.setItem(row, 6, QTableWidgetItem(f"{ref.occupation:.6g}"))
-                self.orbital_table.setItem(row, 7, QTableWidgetItem(f"{ref.energy_ev:.6f}"))
+                self.orbital_table.setItem(row, 4, QTableWidgetItem(f"{ref.occupation:.6g}"))
+                self.orbital_table.setItem(row, 5, QTableWidgetItem(f"{ref.energy_ev:.6f}"))
                 selected_count += int(checked)
                 restored_rows += int(saved is not None)
         self.orbital_table.blockSignals(False)
@@ -1293,7 +1602,7 @@ class OrbitalDiagramPage(QWidget):
             self.selection_status_label.setText("\n".join(errors))
         elif selected_count:
             self.selection_status_label.setText(
-                f"已勾选 {selected_count} 个轨道。来源号是该自旋通道中的编号，Multiwfn 号是实际提交编号。"
+                f"已选择 {selected_count} 个轨道；可以取消不需要绘制的项目。"
             )
         else:
             self.selection_status_label.setText("添加并核验文件后，这里会逐项显示实际绘制的轨道。")
@@ -1307,7 +1616,7 @@ class OrbitalDiagramPage(QWidget):
                 and self.orbital_table.item(row, 1).checkState() == Qt.CheckState.Checked
             )
             self.selection_status_label.setText(
-                f"已勾选 {selected} 个轨道。来源号是该自旋通道中的编号，Multiwfn 号是实际提交编号。"
+                f"已选择 {selected} 个轨道；可以取消不需要绘制的项目。"
             )
             self._configuration_changed()
 
@@ -1643,20 +1952,85 @@ class OrbitalDiagramPage(QWidget):
             return index
         return -1
 
+    @staticmethod
+    def _friendly_stage(stage: object) -> str:
+        normalized = str(stage or "").strip().casefold()
+        return {
+            "pending": "等待开始",
+            "parsing_inputs": "读取并核验文件",
+            "resolving_orbitals": "确定绘制轨道",
+            "generating_reference_cube": "准备参考轨道",
+            "waiting_viewpoint": "等待确认视角",
+            "generating_orbital_cubes": "准备轨道图像",
+            "validating_cubes": "检查轨道数据",
+            "rendering_orbitals": "渲染轨道图像",
+            "composing_diagram": "排版能级图",
+            "collecting": "整理结果",
+            "success": "完成",
+            "completed": "完成",
+            "done": "完成",
+        }.get(normalized, "处理中")
+
+    @staticmethod
+    def _friendly_runtime_error(error: object) -> str:
+        text = str(error or "").strip().casefold()
+        if any(
+            marker in text
+            for marker in (
+                "couldn't open",
+                "could not open",
+                "error opening",
+                "no such file",
+                "file not found",
+                "路径不存在",
+                "文件不存在",
+            )
+        ):
+            return "绘图程序无法打开所需文件，请确认文件仍存在且所在目录可访问。"
+        if "multiwfn" in text:
+            return "轨道数据未能生成，请在结果目录中查看完整日志。"
+        if "vmd" in text or "tachyon" in text:
+            return "轨道图像未能生成，请在结果目录中查看完整日志。"
+        return "任务未能完成，请在结果目录中查看完整日志。"
+
     @Slot(object)
     def _on_worker_event(self, raw_event: object) -> None:
         if isinstance(raw_event, str):
-            self._append_log(raw_event)
+            # Console lines remain in the run's complete log file.  Showing
+            # them here made normal VMD/Multiwfn internals look like user
+            # instructions and flooded the useful progress summary.
             return
         event = _as_dict(raw_event)
         if not event:
-            self._append_log(str(raw_event))
             return
         kind = str(event.get("kind") or event.get("type") or event.get("stage") or "")
         text = str(event.get("text") or event.get("message") or event.get("detail") or "")
-        source = str(event.get("source") or "")
-        if text:
-            self._append_log(f"[{source}] {text}" if source else text)
+        normalized_kind = kind.casefold()
+        if normalized_kind in {
+            "output",
+            "stdout",
+            "stderr",
+            "console",
+            "process_output",
+            "raw_output",
+        }:
+            return
+        visible_summary_kinds = {
+            "progress",
+            "warning",
+            "error",
+            "failed",
+            "job_started",
+            "job_finished",
+            "orbital_stage",
+            "viewpoint_required",
+            "viewpoint_captured",
+        }
+        display_text = text
+        if normalized_kind in {"error", "failed"}:
+            display_text = self._friendly_runtime_error(text)
+        if display_text and normalized_kind in visible_summary_kinds:
+            self._append_log(display_text)
         if event.get("run_dir"):
             self.last_run_dir = str(event["run_dir"])
             self.open_results_button.setEnabled(True)
@@ -1672,17 +2046,7 @@ class OrbitalDiagramPage(QWidget):
         row = self._event_row(event)
         if row >= 0:
             raw_stage = str(event.get("stage") or "")
-            stage_text = {
-                "parsing_inputs": "解析并核验输入",
-                "resolving_orbitals": "解析轨道选择",
-                "generating_reference_cube": "生成参考 Cube",
-                "waiting_viewpoint": "VMD 交互取景",
-                "generating_orbital_cubes": "生成轨道 Cube",
-                "validating_cubes": "核验 Cube",
-                "rendering_orbitals": "Tachyon 渲染",
-                "composing_diagram": "能级排版",
-                "collecting": "整理结果",
-            }.get(raw_stage, raw_stage or kind or "运行中")
+            stage_text = self._friendly_stage(raw_stage or kind)
             if kind == "orbital_stage":
                 orbital = event.get("orbital")
                 orbital_dict = orbital if isinstance(orbital, dict) else _as_dict(orbital)
@@ -1695,11 +2059,11 @@ class OrbitalDiagramPage(QWidget):
                 "success": "完成",
                 "failed": "失败",
                 "cancelled": "已取消",
-            }.get(status.casefold(), status)
+            }.get(status.casefold(), "状态未知")
             self.queue_table.setItem(row, 2, QTableWidgetItem(stage_text))
             self.queue_table.setItem(row, 3, QTableWidgetItem(status_text))
-            if text:
-                self.queue_table.setItem(row, 5, QTableWidgetItem(text))
+            if display_text:
+                self.queue_table.setItem(row, 5, QTableWidgetItem(display_text))
             elapsed = event.get("elapsed_seconds", event.get("duration_seconds"))
             if elapsed is not None:
                 try:
@@ -1737,13 +2101,14 @@ class OrbitalDiagramPage(QWidget):
         self.start_button.setEnabled(True)
         jobs = self._result_jobs(result)
         if error is not None:
-            self.run_state_label.setText(f"运行失败：{error}")
-            self._append_log(f"运行失败：{error}")
+            friendly_error = self._friendly_runtime_error(error)
+            self.run_state_label.setText(f"运行失败：{friendly_error}")
+            self._append_log(f"运行失败：{friendly_error}")
             for row in range(self.queue_table.rowCount()):
                 status_item = self.queue_table.item(row, 3)
                 if status_item and status_item.text() in {"待运行", "进行中"}:
                     self.queue_table.setItem(row, 3, QTableWidgetItem("失败"))
-                    self.queue_table.setItem(row, 5, QTableWidgetItem(str(error)))
+                    self.queue_table.setItem(row, 5, QTableWidgetItem(friendly_error))
             self.retry_button.setEnabled(self.queue_table.rowCount() > 0)
             return
 
@@ -1763,7 +2128,13 @@ class OrbitalDiagramPage(QWidget):
             success = status.casefold() in {"success", "completed", "done", "ok"}
             if not success:
                 failed_count += 1
-            self.queue_table.setItem(row, 2, QTableWidgetItem(str(job_dict.get("stage") or "完成")))
+            self.queue_table.setItem(
+                row,
+                2,
+                QTableWidgetItem(
+                    "完成" if success else self._friendly_stage(job_dict.get("stage"))
+                ),
+            )
             self.queue_table.setItem(row, 3, QTableWidgetItem("完成" if success else "失败"))
             duration = job_dict.get("duration_seconds", job_dict.get("elapsed_seconds", 0))
             try:
@@ -1777,7 +2148,11 @@ class OrbitalDiagramPage(QWidget):
                 or job_dict.get("preview_path")
                 or ""
             )
-            message = str(job_dict.get("error") or image_path or "完成")
+            message = (
+                self._friendly_runtime_error(job_dict.get("error"))
+                if job_dict.get("error")
+                else image_path or "完成"
+            )
             result_item = QTableWidgetItem(message)
             if image_path:
                 result_item.setData(Qt.ItemDataRole.UserRole, image_path)
@@ -1900,17 +2275,24 @@ class OrbitalDiagramPage(QWidget):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
-    def is_running(self) -> bool:
+    def _workflow_is_running(self) -> bool:
         return self.thread is not None and self.thread.isRunning()
 
+    def is_running(self) -> bool:
+        return bool(
+            self._workflow_is_running()
+            or (self.input_thread is not None and self.input_thread.isRunning())
+        )
+
     def cancel(self) -> None:
-        if not self.is_running():
-            return
-        self.cancel_button.setEnabled(False)
-        self.run_state_label.setText("正在停止当前 Multiwfn、VMD 或 Tachyon 任务……")
-        self._append_log("已请求停止当前任务。")
-        if self.worker is not None:
-            self.worker.cancel()
+        if self.is_input_processing():
+            self._cancel_input_processing()
+        if self._workflow_is_running():
+            self.cancel_button.setEnabled(False)
+            self.run_state_label.setText("正在停止当前绘图任务……")
+            self._append_log("已请求停止当前任务。")
+            if self.worker is not None:
+                self.worker.cancel()
 
     def _cleanup_thread(self) -> None:
         if self.worker is not None:
@@ -1922,6 +2304,14 @@ class OrbitalDiagramPage(QWidget):
 
     def cleanup(self) -> None:
         self.cancel()
+        input_thread = self.input_thread
+        if input_thread is not None and input_thread.isRunning():
+            # The worker checks cancellation between files.  Waiting here is
+            # only used during actual widget/application teardown; ordinary
+            # interaction remains non-blocking.
+            input_thread.wait()
+        self.input_worker = None
+        self.input_thread = None
 
     def load_settings(self, config: dict[str, Any]) -> None:
         self._loading_settings = True

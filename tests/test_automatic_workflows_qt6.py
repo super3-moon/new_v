@@ -9,7 +9,11 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import vmd_style_tool as core
-from automatic_workflows_qt6 import AutomationStyleDialog
+from automatic_workflows_qt6 import (
+    AutomationStyleDialog,
+    _stage_label,
+    _status_label,
+)
 from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QPushButton
 from vmd_style_tool_qt6 import MainWindow
 
@@ -114,6 +118,57 @@ class AutomaticWorkflowInterfaceTests(unittest.TestCase):
             self.assertEqual(len(selection["hash"]), 64)
         finally:
             dialog.close()
+
+    def test_results_use_user_facing_progress_copy(self) -> None:
+        window = MainWindow()
+        try:
+            page = window.automation_page
+            input_file = Path(self.temp_dir.name) / "sample.fchk"
+            page._run_files = [input_file]
+            page._populate_queue([input_file])
+            page.run_log.clear()
+
+            page._on_worker_event(
+                {
+                    "kind": "output",
+                    "index": 1,
+                    "source": "VMD",
+                    "text": "INTERNAL CONSOLE OUTPUT",
+                }
+            )
+            self.assertNotIn("INTERNAL", page.run_log.toPlainText())
+
+            page._on_worker_event(
+                {
+                    "kind": "job_stage",
+                    "index": 1,
+                    "stage": "private_engine_stage",
+                    "status": "private_engine_status",
+                    "message": "INTERNAL STAGE MESSAGE",
+                }
+            )
+            self.assertEqual(page.queue_table.item(0, 2).text(), "处理中")
+            self.assertEqual(page.queue_table.item(0, 3).text(), "状态未知")
+            self.assertEqual(page.queue_table.item(0, 5).text(), "处理中")
+            self.assertNotIn("INTERNAL", page.run_log.toPlainText())
+            self.assertEqual(_stage_label("vmd_render"), "生成图片")
+            self.assertEqual(_status_label("success"), "完成")
+        finally:
+            window.close()
+
+    def test_automatic_workflow_copy_avoids_implementation_terms(self) -> None:
+        window = MainWindow()
+        try:
+            page = window.automation_page
+            labels = "\n".join(label.text() for label in page.findChildren(QLabel))
+            self.assertNotIn("High 网格", labels)
+            self.assertNotIn("Low 网格", labels)
+            self.assertNotIn("Multiwfn + VMD · 支持批量", labels)
+            self.assertNotIn("失败阶段", labels)
+            self.assertEqual(page.queue_table.horizontalHeaderItem(2).text(), "当前进度")
+            self.assertEqual(page.queue_table.horizontalHeaderItem(5).text(), "结果说明")
+        finally:
+            window.close()
 
 
 if __name__ == "__main__":

@@ -53,6 +53,10 @@ STAGE_RENDER = "rendering_orbitals"
 STAGE_COMPOSE = "composing_diagram"
 STAGE_COLLECT = "collecting"
 
+# The OpenGL window is an editing surface, not the requested Tachyon output.
+# 1160x640 matches a comfortable, non-maximized VMD window on a 1080p desktop.
+INTERACTIVE_VMD_VIEWPORT = (1160, 640)
+
 RETRY_STAGES = {
     STAGE_PARSE,
     STAGE_RESOLVE,
@@ -148,6 +152,22 @@ def _clean_part(value: object, fallback: str = "molecule") -> str:
     text = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", str(value or "").strip())
     text = re.sub(r"\s+", "_", text).strip(" ._")
     return (text or fallback)[:100]
+
+
+def _orbital_artifact_stem(ref: orbital_data.OrbitalRef) -> str:
+    """Return a stable ASCII-only name for files passed to VMD 1.9.3.
+
+    The Windows build of VMD 1.9.3 opens the ``-e`` script argument through
+    the active ANSI code page.  A scientifically useful display label such as
+    ``α-HOMO-1`` therefore cannot safely be used as a script or render
+    filename: VMD either rejects the existing script or writes the image under
+    a different, mojibake name.  Spin plus both orbital indices are unique
+    within a job and keep these implementation filenames readable without
+    leaking the display label into the legacy command line.
+    """
+    spin = re.sub(r"[^a-z0-9]+", "_", _enum_value(ref.spin).casefold()).strip("_")
+    spin = spin or "orbital"
+    return f"{spin}_{int(ref.channel_index):06d}_{int(ref.global_index):06d}"
 
 
 def _unique_target(path: Path) -> Path:
@@ -1031,8 +1051,11 @@ class OrbitalDiagramRunner:
                 protocol,
                 self.plan.settings.style,
                 rep0_commands=self.plan.settings.rep0_commands,
-                width=self.plan.settings.width,
-                height=self.plan.settings.height,
+                # This is only the interactive OpenGL viewport.  Keeping it
+                # separate from the requested Tachyon resolution prevents a
+                # 1600x1200 render setting from opening VMD maximized/off-screen.
+                width=INTERACTIVE_VMD_VIEWPORT[0],
+                height=INTERACTIVE_VMD_VIEWPORT[1],
                 debug_state_path=debug_state,
             ),
         )
@@ -1158,7 +1181,7 @@ class OrbitalDiagramRunner:
             if existing.is_file() and existing.stat().st_size > 64:
                 job.render_status[key] = STATUS_SUCCESS
                 continue
-            safe = _clean_part(f"{_enum_value(ref.spin)}_{ref.channel_index}_{ref.label}", "orbital")
+            safe = _orbital_artifact_stem(ref)
             tga = render_dir / f"{safe}.tga"
             png = render_dir / f"{safe}.png"
             tcl = render_dir / f"{safe}.vmd"

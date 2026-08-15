@@ -1014,6 +1014,11 @@ def build_interactive_capture_tcl(
         "trace add variable ::vmd_quit write _mo_quit_trace",
         *_initial_signed_scene_tcl(cube, style, rep0_commands),
         f"display resize {width} {height}",
+        # VMD remembers a maximized OpenGL window between sessions on some
+        # Windows installations.  An explicit resize followed by reposition
+        # restores a normal, fully visible window without affecting the
+        # headless Tachyon resolution selected later by the workflow.
+        "display reposition 32 40",
         "axes location Off",
         "display update ui",
         "package require Tk",
