@@ -1017,8 +1017,12 @@ class OrbitalDiagramRunner:
                 return state
 
         protocol = job.work_dir / "viewpoint.capture"
+        cancel_marker = orbital_vmd.capture_cancel_marker_path(protocol)
+        error_log = orbital_vmd.capture_error_log_path(protocol)
         debug_state = job.work_dir / "vmd_final_state.vmd"
         protocol.unlink(missing_ok=True)
+        cancel_marker.unlink(missing_ok=True)
+        error_log.unlink(missing_ok=True)
         script = job.work_dir / "capture_viewpoint.vmd"
         _write_text_atomic(
             script,
@@ -1051,16 +1055,28 @@ class OrbitalDiagramRunner:
             source="VMD",
             job=job,
             hide_window=False,
+            completion_markers={
+                "viewpoint_confirmed": protocol,
+                "viewpoint_cancelled": cancel_marker,
+            },
         )
-        if reason == "cancelled":
+        if reason != "cancelled":
+            if cancel_marker.is_file() and not protocol.is_file():
+                reason = "viewpoint_cancelled"
+            elif protocol.is_file():
+                reason = "viewpoint_confirmed"
+        if reason in {"cancelled", "viewpoint_cancelled"}:
             job.viewpoint_status = STATUS_CANCELLED
             raise _Cancelled
         if reason == "timeout":
             job.viewpoint_status = STATUS_TIMEOUT
             raise _TimedOut("等待 VMD 角度确认超时。参考 Cube 已保留，可仅重试角度校准。")
-        if return_code != 0:
+        if return_code != 0 and reason != "viewpoint_confirmed":
             job.viewpoint_status = STATUS_FAILED
-            raise OrbitalDiagramError(f"VMD 角度校准未正常结束（退出码 {return_code}）。")
+            detail = f"；诊断日志：{error_log}" if error_log.is_file() else ""
+            raise OrbitalDiagramError(
+                f"VMD 角度校准未正常结束（退出码 {return_code}）{detail}。"
+            )
         if not protocol.is_file():
             job.viewpoint_status = STATUS_CANCELLED
             raise OrbitalDiagramError("没有确认 VMD 视角；轨道 Cube 已保留，可重新校准角度。")
@@ -1507,6 +1523,7 @@ class OrbitalDiagramRunner:
         source: str,
         job: OrbitalDiagramJob,
         hide_window: bool,
+        completion_markers: Mapping[str, Path] | None = None,
     ) -> tuple[int, str]:
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" and hide_window else 0
         encoding = locale.getpreferredencoding(False) or "utf-8"
@@ -1546,6 +1563,10 @@ class OrbitalDiagramRunner:
             started = time.monotonic()
             stream_finished = False
             reason = ""
+            markers = tuple(
+                (str(marker_reason), Path(marker_path))
+                for marker_reason, marker_path in (completion_markers or {}).items()
+            )
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("w", encoding="utf-8", errors="replace") as log:
                 while process.poll() is None or not stream_finished:
@@ -1568,9 +1589,30 @@ class OrbitalDiagramRunner:
                     if self._cancel_event.is_set() and process.poll() is None:
                         reason = "cancelled"
                         self._terminate_process(process)
-                    elif time.monotonic() - started > timeout_seconds and process.poll() is None:
-                        reason = "timeout"
-                        self._terminate_process(process)
+                    elif not reason:
+                        completed = next(
+                            (
+                                marker_reason
+                                for marker_reason, marker_path in markers
+                                if marker_path.is_file()
+                            ),
+                            "",
+                        )
+                        if completed:
+                            reason = completed
+                            log.write(
+                                f"MolecularStudio host: detected {completed}; "
+                                "closed the interactive VMD process safely.\n"
+                            )
+                            log.flush()
+                            if process.poll() is None:
+                                self._terminate_process(process)
+                        elif (
+                            time.monotonic() - started > timeout_seconds
+                            and process.poll() is None
+                        ):
+                            reason = "timeout"
+                            self._terminate_process(process)
             thread.join(timeout=1)
             return process.wait(timeout=5), reason
         finally:

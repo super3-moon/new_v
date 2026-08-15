@@ -14,9 +14,12 @@ from direct_workflow_qt6 import DirectWorkflowPage
 from multiwfn_batch_qt6 import MultiwfnBatchPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
 from PySide6.QtCore import (
+    QCoreApplication,
     QEasingCurve,
+    QEvent,
     QObject,
     QPoint,
+    QPointF,
     QPropertyAnimation,
     QRect,
     QThread,
@@ -33,8 +36,11 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QShortcut,
+    QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -87,6 +93,116 @@ def preferred_window_size(available_width: int, available_height: int) -> tuple[
         min(WINDOW_MAX_H, int(max(0, available_height) * WINDOW_HEIGHT_RATIO)),
     )
     return width, height
+
+
+class WheelNavigationGuard(QObject):
+    """Keep wheel gestures for page navigation outside an open drop-down.
+
+    Qt changes a combo box, spin box, or slider as soon as the pointer happens to
+    be above it. That is especially easy to trigger in this application's long
+    configuration pages. This application-wide filter forwards such gestures
+    to the nearest useful scroll area instead. A combo box's open popup remains
+    untouched so its options can still be scrolled normally.
+    """
+
+    _PROTECTED_WIDGETS = (QComboBox, QAbstractSpinBox, QSlider)
+
+    @classmethod
+    def _protected_widget(cls, watched: QObject) -> QWidget | None:
+        widget = watched if isinstance(watched, QWidget) else None
+        while widget is not None:
+            if isinstance(widget, cls._PROTECTED_WIDGETS):
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    @staticmethod
+    def _can_scroll(scroll_area: QAbstractScrollArea, event: QWheelEvent) -> bool:
+        delta = event.pixelDelta()
+        if delta.isNull():
+            delta = event.angleDelta()
+
+        vertical = scroll_area.verticalScrollBar()
+        if delta.y() > 0 and vertical.value() > vertical.minimum():
+            return True
+        if delta.y() < 0 and vertical.value() < vertical.maximum():
+            return True
+
+        horizontal = scroll_area.horizontalScrollBar()
+        if delta.x() > 0 and horizontal.value() > horizontal.minimum():
+            return True
+        if delta.x() < 0 and horizontal.value() < horizontal.maximum():
+            return True
+        return False
+
+    @classmethod
+    def _scroll_area_for(
+        cls, control: QWidget, event: QWheelEvent
+    ) -> QAbstractScrollArea | None:
+        candidates: list[QAbstractScrollArea] = []
+        parent = control.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QAbstractScrollArea):
+                candidates.append(parent)
+                if cls._can_scroll(parent, event):
+                    return parent
+            parent = parent.parentWidget()
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _forward_wheel(
+        scroll_area: QAbstractScrollArea, event: QWheelEvent
+    ) -> None:
+        viewport = scroll_area.viewport()
+        local_position = QPointF(
+            viewport.mapFromGlobal(event.globalPosition().toPoint())
+        )
+        forwarded = QWheelEvent(
+            local_position,
+            event.globalPosition(),
+            event.pixelDelta(),
+            event.angleDelta(),
+            event.buttons(),
+            event.modifiers(),
+            event.phase(),
+            event.inverted(),
+            event.source(),
+            event.pointingDevice(),
+        )
+        QCoreApplication.sendEvent(viewport, forwarded)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() != QEvent.Type.Wheel or not isinstance(event, QWheelEvent):
+            return super().eventFilter(watched, event)
+
+        control = self._protected_widget(watched)
+        if control is None or not control.isEnabled():
+            return super().eventFilter(watched, event)
+
+        if isinstance(control, QComboBox) and control.view().isVisible():
+            return super().eventFilter(watched, event)
+
+        scroll_area = self._scroll_area_for(control, event)
+        if scroll_area is not None:
+            self._forward_wheel(scroll_area, event)
+        return True
+
+
+def install_wheel_navigation_guard(
+    app: QApplication | None = None,
+) -> WheelNavigationGuard:
+    """Install one application-wide wheel guard and retain its Python lifetime."""
+
+    qt_app = app or QApplication.instance()
+    if not isinstance(qt_app, QApplication):
+        raise RuntimeError("QApplication must exist before installing the wheel guard")
+
+    guard = getattr(qt_app, "_wheel_navigation_guard", None)
+    if not isinstance(guard, WheelNavigationGuard):
+        guard = WheelNavigationGuard(qt_app)
+        qt_app.installEventFilter(guard)
+        setattr(qt_app, "_wheel_navigation_guard", guard)
+    return guard
 
 
 def app_dir() -> Path:
@@ -572,6 +688,7 @@ class CardGrid(QScrollArea):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        install_wheel_navigation_guard()
         self.setWindowTitle("VMD + Multiwfn 绘图工作台")
         self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
         screen = QApplication.primaryScreen()

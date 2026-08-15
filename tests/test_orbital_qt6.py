@@ -7,7 +7,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QTableWidgetItem
 
 from orbital_diagram_qt6 import OrbitalDiagramPage
@@ -48,7 +48,9 @@ class OrbitalDiagramQtTests(unittest.TestCase):
                 self.assertEqual(len(page.pairs), 1)
                 self.assertEqual(page.pair_validity, [True])
                 self.assertEqual(page.orbital_table.rowCount(), 6)
-                self.assertEqual(page.preset_combo.currentData(), "homo_minus_1_to_lumo_plus_3")
+                self.assertEqual(
+                    page._selection_spec()["expression"], "HOMO-1..LUMO+3"
+                )
                 page.orbital_table.item(0, 1).setCheckState(Qt.CheckState.Unchecked)
                 settings = page._settings()
                 self.assertEqual(len(settings["orbital_selections"][0]["orbitals"]), 5)
@@ -75,6 +77,128 @@ class OrbitalDiagramQtTests(unittest.TestCase):
                 self.assertEqual(page.orbital_table.rowCount(), 2)
                 self.assertEqual(page._settings()["selection_mode"], "custom")
                 self.assertEqual(page._settings()["selection_text"], "HOMO,LUMO+1")
+            finally:
+                page.close()
+
+    def test_custom_range_uses_two_editable_offset_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                page.start_offset_combo.setEditText("-2")
+                page.end_offset_combo.setEditText("+4")
+                self.app.processEvents()
+
+                spec = page._selection_spec()
+                self.assertTrue(page.start_offset_combo.isEditable())
+                self.assertTrue(page.end_offset_combo.isEditable())
+                self.assertIn(
+                    "-1",
+                    [
+                        page.start_offset_combo.itemText(index)
+                        for index in range(page.start_offset_combo.count())
+                    ],
+                )
+                self.assertIn(
+                    "+3",
+                    [
+                        page.end_offset_combo.itemText(index)
+                        for index in range(page.end_offset_combo.count())
+                    ],
+                )
+                self.assertEqual(spec["expression"], "HOMO-2..LUMO+4")
+                self.assertEqual(spec["start_anchor"], "HOMO")
+                self.assertEqual(spec["start_offset"], -2)
+                self.assertEqual(spec["end_anchor"], "LUMO")
+                self.assertEqual(spec["end_offset"], 4)
+                self.assertFalse(hasattr(page, "preset_combo"))
+                self.assertFalse(hasattr(page, "start_anchor_combo"))
+                self.assertFalse(hasattr(page, "end_anchor_combo"))
+                visible_labels = {
+                    label.text() for label in page.findChildren(QLabel)
+                }
+                self.assertIn("轨道范围", visible_labels)
+                self.assertNotIn("快捷选择", visible_labels)
+                self.assertNotIn("自定义范围", visible_labels)
+
+                page.resize(620, 620)
+                page.show()
+                self.app.processEvents()
+                scroll = page.page_stack.currentWidget().findChild(QScrollArea)
+                self.assertIsNotNone(scroll)
+                assert scroll is not None
+                for combo in (page.start_offset_combo, page.end_offset_combo):
+                    top_left = combo.mapTo(scroll.viewport(), QPoint(0, 0))
+                    self.assertGreaterEqual(top_left.x(), 0)
+                    self.assertLessEqual(
+                        top_left.x() + combo.width(), scroll.viewport().width()
+                    )
+            finally:
+                page.close()
+
+    def test_legacy_structured_range_loads_into_compact_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                page.load_settings(
+                    {
+                        "orbital_diagram_settings": {
+                            "selection": {
+                                "mode": "custom",
+                                "expression": "HOMO-3..LUMO+5",
+                                "start_anchor": "HOMO",
+                                "start_offset": -3,
+                                "end_anchor": "LUMO",
+                                "end_offset": 5,
+                                "spin_mode": "auto",
+                            }
+                        }
+                    }
+                )
+                self.assertFalse(hasattr(page, "preset_combo"))
+                self.assertEqual(page.start_offset_combo.currentText(), "-3")
+                self.assertEqual(page.end_offset_combo.currentText(), "+5")
+                self.assertEqual(page.manual_expression_edit.text(), "")
+                self.assertEqual(
+                    page._selection_spec()["expression"], "HOMO-3..LUMO+5"
+                )
+            finally:
+                page.close()
+
+    def test_legacy_shortcuts_migrate_without_restoring_redundant_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                for mode, expected in (
+                    ("homo", "HOMO"),
+                    ("lumo", "LUMO"),
+                    ("homo_lumo", "HOMO,LUMO"),
+                ):
+                    page.load_settings(
+                        {
+                            "orbital_diagram_settings": {
+                                "selection": {"mode": mode, "spin_mode": "auto"}
+                            }
+                        }
+                    )
+                    self.assertEqual(page.manual_expression_edit.text(), expected)
+                    self.assertEqual(page._selection_spec()["expression"], expected)
+
+                page.load_settings(
+                    {
+                        "orbital_diagram_settings": {
+                            "selection": {
+                                "mode": "homo_minus_1_to_lumo_plus_3",
+                                "spin_mode": "auto",
+                            }
+                        }
+                    }
+                )
+                self.assertEqual(page.manual_expression_edit.text(), "")
+                self.assertEqual(page.start_offset_combo.currentText(), "-1")
+                self.assertEqual(page.end_offset_combo.currentText(), "+3")
+                self.assertEqual(
+                    page._selection_spec()["expression"], "HOMO-1..LUMO+3"
+                )
             finally:
                 page.close()
 

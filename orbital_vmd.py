@@ -32,6 +32,16 @@ MAX_FIELD_BYTES = 256 * 1024
 MAX_NATIVE_STATE_BYTES = 64 * 1024 * 1024
 
 
+def capture_cancel_marker_path(state_path: Path | str) -> Path:
+    """Return the atomic cancellation marker paired with a capture file."""
+    return Path(f"{Path(state_path)}.cancelled")
+
+
+def capture_error_log_path(state_path: Path | str) -> Path:
+    """Return the VMD-side diagnostic log paired with a capture file."""
+    return Path(f"{Path(state_path)}.error.log")
+
+
 class OrbitalVmdError(RuntimeError):
     """Base error raised by orbital VMD helpers."""
 
@@ -796,6 +806,39 @@ def _capture_helpers_tcl() -> list[str]:
         "    puts $handle [join $fields \"\\t\"]",
         "    incr ::MO_RECORD_COUNT",
         "}",
+        "proc _mo_write_marker {path value} {",
+        "    set tmp \"$path.tmp.[pid]\"",
+        "    file mkdir [file dirname $path]",
+        "    catch {file delete -force $tmp}",
+        "    set handle [open $tmp w]",
+        "    fconfigure $handle -encoding utf-8 -translation lf",
+        "    puts $handle $value",
+        "    close $handle",
+        "    file rename -force $tmp $path",
+        "}",
+        "proc _mo_set_controls {state} {",
+        "    foreach widget {.moCapture.confirm .moCapture.reset .moCapture.cancel} {",
+        "        if {[winfo exists $widget]} { catch {$widget configure -state $state} }",
+        "    }",
+        "}",
+        "proc _mo_report_error {stage message options} {",
+        "    catch {",
+        "        file mkdir [file dirname $::MO_ERROR_PATH]",
+        "        set errorHandle [open $::MO_ERROR_PATH a]",
+        "        fconfigure $errorHandle -encoding utf-8 -translation lf",
+        "        puts $errorHandle \"---- [clock format [clock seconds] -format {%Y-%m-%d %H:%M:%S}] ----\"",
+        "        puts $errorHandle \"stage: $stage\"",
+        "        puts $errorHandle \"message: $message\"",
+        "        if {[dict exists $options -errorinfo]} {",
+        "            puts $errorHandle [dict get $options -errorinfo]",
+        "        }",
+        "        puts $errorHandle \"\"",
+        "        close $errorHandle",
+        "    }",
+        "    puts stderr \"MolecularStudio capture error ($stage): $message\"",
+        "    _mo_set_controls normal",
+        "    tk_messageBox -icon error -title \"VMD\" -message \"$message\\n\\nA diagnostic log was saved to:\\n$::MO_ERROR_PATH\"",
+        "}",
         "proc _mo_write_state {} {",
         "    if {[lsearch -exact [molinfo list] $::MO_REFERENCE_MOL] < 0} {",
         "        error \"The reference molecule was deleted; reset or reopen this step.\"",
@@ -866,12 +909,13 @@ def _capture_helpers_tcl() -> list[str]:
         "    file rename -force $tmp $::MO_STATE_PATH",
         "}",
         "proc _mo_confirm {} {",
+        "    _mo_set_controls disabled",
         "    rotate stop",
         "    display update ui",
         "    if {$::MO_DEBUG_STATE_PATH ne \"\"} {",
         "        catch {file delete -force $::MO_DEBUG_STATE_PATH}",
-        "        if {[catch {save_state $::MO_DEBUG_STATE_PATH} message]} {",
-        "            tk_messageBox -icon error -title \"VMD\" -message $message",
+        "        if {[catch {save_state $::MO_DEBUG_STATE_PATH} message options]} {",
+        "            _mo_report_error \"official save_state\" $message $options",
         "            return",
         "        }",
         "        if {[catch {",
@@ -881,21 +925,22 @@ def _capture_helpers_tcl() -> list[str]:
         "            puts $nativeHandle \"# MolecularStudio geometry $::MO_GEOMETRY_FINGERPRINT\"",
         "            puts $nativeHandle \"# MolecularStudio cube_sha256 $::MO_REFERENCE_SHA256\"",
         "            close $nativeHandle",
-        "        } message]} {",
+        "        } message options]} {",
         "            catch {close $nativeHandle}",
         "            catch {file delete -force $::MO_DEBUG_STATE_PATH}",
-        "            tk_messageBox -icon error -title \"VMD\" -message $message",
+        "            _mo_report_error \"native state metadata\" $message $options",
         "            return",
         "        }",
         "    }",
-        "    if {[catch {_mo_write_state} message]} {",
+        "    if {[catch {_mo_write_state} message options]} {",
         "        if {$::MO_DEBUG_STATE_PATH ne \"\"} { catch {file delete -force $::MO_DEBUG_STATE_PATH} }",
-        "        tk_messageBox -icon error -title \"VMD\" -message $message",
+        "        _mo_report_error \"validated capture protocol\" $message $options",
         "        return",
         "    }",
+        "    catch {file delete -force $::MO_CANCEL_PATH}",
         "    set ::MO_CONFIRMED 1",
         "    catch {destroy .moCapture}",
-        "    quit",
+        "    puts \"MolecularStudio: capture confirmed; the host will close VMD safely.\"",
         "}",
         "proc _mo_reset {} {",
         "    if {[lsearch -exact [molinfo list] $::MO_REFERENCE_MOL] >= 0} {",
@@ -908,11 +953,15 @@ def _capture_helpers_tcl() -> list[str]:
         "    set ::MO_CONFIRMED 0",
         "    catch {file delete -force $::MO_STATE_PATH}",
         "    if {$::MO_DEBUG_STATE_PATH ne \"\"} { catch {file delete -force $::MO_DEBUG_STATE_PATH} }",
+        "    catch {_mo_write_marker $::MO_CANCEL_PATH cancelled}",
         "    catch {destroy .moCapture}",
-        "    quit",
+        "    puts \"MolecularStudio: capture cancelled; the host will close VMD safely.\"",
         "}",
         "proc _mo_quit_trace {name1 name2 operation} {",
-        "    if {!$::MO_CONFIRMED} { catch {file delete -force $::MO_STATE_PATH} }",
+        "    if {!$::MO_CONFIRMED} {",
+        "        catch {file delete -force $::MO_STATE_PATH}",
+        "        catch {_mo_write_marker $::MO_CANCEL_PATH cancelled}",
+        "    }",
         "}",
     ]
 
@@ -930,8 +979,10 @@ def build_interactive_capture_tcl(
     """Build an interactive VMD script that saves a validated data snapshot.
 
     The caller launches VMD normally (not ``-dispdev text``) with this Tcl
-    script.  A successfully confirmed session creates ``state_path`` and
-    exits VMD.  Cancel or ordinary VMD shutdown leaves no confirmed state.
+    script.  A successfully confirmed session atomically creates ``state_path``;
+    the host then closes VMD without invoking its crash-prone Windows 1.9.3
+    shutdown path.  Cancel writes a paired atomic marker and leaves no
+    confirmed state.
     """
     cube = Path(cube_path).expanduser().resolve()
     state = Path(state_path).expanduser().resolve()
@@ -943,16 +994,22 @@ def build_interactive_capture_tcl(
     geometry_fingerprint = cube_geometry_fingerprint(cube)
     cube_digest = _file_sha256(cube)
     debug = Path(debug_state_path).expanduser().resolve() if debug_state_path else None
+    cancel_marker = capture_cancel_marker_path(state)
+    error_log = capture_error_log_path(state)
 
     lines: list[str] = [
         "# Generated by orbital_vmd.py; VMD 1.9.3 / Tcl 8.5 compatible.",
         *_capture_helpers_tcl(),
         f"set ::MO_STATE_PATH {_tcl_hex_expression(state)}",
+        f"set ::MO_CANCEL_PATH {_tcl_hex_expression(cancel_marker)}",
+        f"set ::MO_ERROR_PATH {_tcl_hex_expression(error_log)}",
         f"set ::MO_DEBUG_STATE_PATH {_tcl_hex_expression(debug) if debug else '{}'}",
         f"set ::MO_GEOMETRY_FINGERPRINT {{{geometry_fingerprint}}}",
         f"set ::MO_REFERENCE_SHA256 {{{cube_digest}}}",
         "set ::MO_CONFIRMED 0",
         "catch {file delete -force $::MO_STATE_PATH}",
+        "catch {file delete -force $::MO_CANCEL_PATH}",
+        "catch {file delete -force $::MO_ERROR_PATH}",
         "if {$::MO_DEBUG_STATE_PATH ne \"\"} { catch {file delete -force $::MO_DEBUG_STATE_PATH} }",
         "trace add variable ::vmd_quit write _mo_quit_trace",
         *_initial_signed_scene_tcl(cube, style, rep0_commands),
@@ -1819,6 +1876,8 @@ __all__ = [
     "VmdViewState",
     "build_batch_render_tcl",
     "build_interactive_capture_tcl",
+    "capture_cancel_marker_path",
+    "capture_error_log_path",
     "cube_geometry_fingerprint",
     "load_view_state",
     "resolve_render_dimensions",

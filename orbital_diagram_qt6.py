@@ -6,13 +6,14 @@ import importlib
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import orbital_data
 import vmd_style_tool as core
 from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -505,50 +506,36 @@ class OrbitalDiagramPage(QWidget):
 
         select_card, select_layout = self._card(
             "2 · 选择要绘制的轨道",
-            "先用快捷选择；需要更精确时再改起点、终点与偏移。也可以在解析结果中逐项取消不需要的轨道；手动表达式是补充入口。",
+            "直接输入 HOMO 与 LUMO 的相对偏移，或从下拉列表选常用值。解析后还可逐项取消不需要的轨道。",
         )
         quick_grid = QGridLayout()
         quick_grid.setHorizontalSpacing(10)
         quick_grid.setVerticalSpacing(9)
-        quick_grid.addWidget(QLabel("快捷选择"), 0, 0)
-        self.preset_combo = QComboBox()
-        self.preset_combo.addItem("HOMO", "homo")
-        self.preset_combo.addItem("LUMO", "lumo")
-        self.preset_combo.addItem("HOMO + LUMO", "homo_lumo")
-        self.preset_combo.addItem("HOMO−1 至 LUMO+3", "homo_minus_1_to_lumo_plus_3")
-        self.preset_combo.addItem("自定义范围", "frontier_range")
-        self.preset_combo.setCurrentIndex(3)
-        self.preset_combo.currentIndexChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.preset_combo, 0, 1, 1, 3)
+        quick_grid.addWidget(QLabel("轨道范围"), 0, 0)
+        range_layout = QHBoxLayout()
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        range_layout.setSpacing(8)
+        start_anchor_label = QLabel("HOMO")
+        start_anchor_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        start_anchor_label.setMinimumWidth(52)
+        start_anchor_label.setToolTip("起点固定以 HOMO 为基准")
+        range_layout.addWidget(start_anchor_label)
+        self.start_offset_combo = self._make_offset_combo(-1, "HOMO")
+        range_layout.addWidget(self.start_offset_combo, 1)
+        separator_label = QLabel("至")
+        separator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        range_layout.addWidget(separator_label)
+        end_anchor_label = QLabel("LUMO")
+        end_anchor_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        end_anchor_label.setMinimumWidth(52)
+        end_anchor_label.setToolTip("终点固定以 LUMO 为基准")
+        range_layout.addWidget(end_anchor_label)
+        self.end_offset_combo = self._make_offset_combo(3, "LUMO")
+        range_layout.addWidget(self.end_offset_combo, 1)
+        range_layout.addStretch(2)
+        quick_grid.addLayout(range_layout, 0, 1, 1, 5)
 
-        quick_grid.addWidget(QLabel("起点"), 1, 0)
-        self.start_anchor_combo = QComboBox()
-        self.start_anchor_combo.addItem("HOMO", "HOMO")
-        self.start_anchor_combo.addItem("LUMO", "LUMO")
-        self.start_anchor_combo.currentIndexChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.start_anchor_combo, 1, 1)
-        self.start_offset_spin = QSpinBox()
-        self.start_offset_spin.setRange(-50, 50)
-        self.start_offset_spin.setValue(-1)
-        self.start_offset_spin.setPrefix("偏移 ")
-        self.start_offset_spin.valueChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.start_offset_spin, 1, 2)
-
-        quick_grid.addWidget(QLabel("终点"), 1, 3)
-        self.end_anchor_combo = QComboBox()
-        self.end_anchor_combo.addItem("HOMO", "HOMO")
-        self.end_anchor_combo.addItem("LUMO", "LUMO")
-        self.end_anchor_combo.setCurrentIndex(1)
-        self.end_anchor_combo.currentIndexChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.end_anchor_combo, 1, 4)
-        self.end_offset_spin = QSpinBox()
-        self.end_offset_spin.setRange(-50, 50)
-        self.end_offset_spin.setValue(3)
-        self.end_offset_spin.setPrefix("偏移 ")
-        self.end_offset_spin.valueChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.end_offset_spin, 1, 5)
-
-        quick_grid.addWidget(QLabel("自旋"), 2, 0)
+        quick_grid.addWidget(QLabel("自旋"), 1, 0)
         self.spin_combo = QComboBox()
         self.spin_combo.addItem("自动（受限轨道 / 非限制两通道）", "auto")
         self.spin_combo.addItem("α + β", "both")
@@ -556,16 +543,15 @@ class OrbitalDiagramPage(QWidget):
         self.spin_combo.addItem("仅 β", "beta")
         self.spin_combo.addItem("空间轨道", "spatial")
         self.spin_combo.currentIndexChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.spin_combo, 2, 1, 1, 2)
-        quick_grid.addWidget(QLabel("手动表达式（可选）"), 2, 3)
+        quick_grid.addWidget(self.spin_combo, 1, 1, 1, 5)
+        quick_grid.addWidget(QLabel("手动表达式（可选）"), 2, 0)
         self.manual_expression_edit = QLineEdit()
         self.manual_expression_edit.setPlaceholderText(
             "如 HOMO-2..LUMO+3；或 alpha:HOMO-1..LUMO+2; beta:HOMO..LUMO"
         )
         self.manual_expression_edit.textChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.manual_expression_edit, 2, 4, 1, 2)
+        quick_grid.addWidget(self.manual_expression_edit, 2, 1, 1, 5)
         quick_grid.setColumnStretch(1, 1)
-        quick_grid.setColumnStretch(4, 1)
         select_layout.addLayout(quick_grid)
 
         self.orbital_table = QTableWidget(0, 8)
@@ -1128,6 +1114,64 @@ class OrbitalDiagramPage(QWidget):
     def _frontier_text(anchor: str, offset: int) -> str:
         return anchor if offset == 0 else f"{anchor}{offset:+d}"
 
+    def _make_offset_combo(self, value: int, anchor: str) -> QComboBox:
+        """Create the compact, editable offset selector used after HOMO/LUMO."""
+
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.setMinimumContentsLength(4)
+        combo.setMinimumWidth(76)
+        combo.setMaximumWidth(112)
+        combo.setObjectName(f"orbital{anchor.title()}OffsetCombo")
+        combo.setAccessibleName(f"{anchor} 偏移")
+        for offset in range(-5, 6):
+            combo.addItem(self._offset_text(offset), offset)
+        editor = combo.lineEdit()
+        if editor is not None:
+            editor.setValidator(QIntValidator(-50, 50, editor))
+            editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            editor.setPlaceholderText("0")
+            editor.editingFinished.connect(
+                lambda target=combo, default=value: self._normalize_offset_combo(
+                    target, default
+                )
+            )
+        combo.setToolTip(
+            f"直接输入 {anchor} 的偏移整数（-50 至 50），或从列表选常用值"
+        )
+        combo.setCurrentText(self._offset_text(value))
+        combo.currentTextChanged.connect(self._selection_controls_changed)
+        return combo
+
+    @staticmethod
+    def _offset_text(value: int) -> str:
+        return "0" if value == 0 else f"{value:+d}"
+
+    @staticmethod
+    def _offset_value(combo: QComboBox, fallback: int = 0) -> int:
+        text = (
+            combo.currentText()
+            .strip()
+            .replace("−", "-")
+            .replace("＋", "+")
+            .replace("－", "-")
+        )
+        try:
+            value = int(text)
+        except (TypeError, ValueError):
+            value = fallback
+        return max(-50, min(50, value))
+
+    def _set_offset_combo(self, combo: QComboBox, value: int) -> None:
+        combo.setCurrentText(self._offset_text(max(-50, min(50, int(value)))))
+
+    def _normalize_offset_combo(self, combo: QComboBox, fallback: int = 0) -> None:
+        self._set_offset_combo(combo, self._offset_value(combo, fallback))
+
     def _selection_spec(self) -> dict[str, Any]:
         manual = self.manual_expression_edit.text().strip()
         spin_mode = str(self.spin_combo.currentData() or "auto")
@@ -1138,48 +1182,29 @@ class OrbitalDiagramPage(QWidget):
                 "spin_mode": spin_mode,
                 "expression": manual,
             }
-        mode = str(self.preset_combo.currentData() or "homo_minus_1_to_lumo_plus_3")
-        if mode == "frontier_range":
-            start = self._frontier_text(
-                str(self.start_anchor_combo.currentData() or "HOMO"),
-                self.start_offset_spin.value(),
-            )
-            end = self._frontier_text(
-                str(self.end_anchor_combo.currentData() or "LUMO"),
-                self.end_offset_spin.value(),
-            )
-            return {
-                "mode": "custom",
-                "text": f"{start}..{end}",
-                "spin_mode": spin_mode,
-                "expression": f"{start}..{end}",
-                "start_anchor": str(self.start_anchor_combo.currentData() or "HOMO"),
-                "start_offset": self.start_offset_spin.value(),
-                "end_anchor": str(self.end_anchor_combo.currentData() or "LUMO"),
-                "end_offset": self.end_offset_spin.value(),
-            }
-        expression_map = {
-            "homo": "HOMO",
-            "lumo": "LUMO",
-            "homo_lumo": "HOMO,LUMO",
-            "homo_minus_1_to_lumo_plus_3": "HOMO-1..LUMO+3",
-        }
+        start_offset = self._offset_value(self.start_offset_combo, -1)
+        end_offset = self._offset_value(self.end_offset_combo, 3)
+        start = self._frontier_text("HOMO", start_offset)
+        end = self._frontier_text("LUMO", end_offset)
         return {
-            "mode": mode,
-            "text": None,
+            "mode": "custom",
+            "text": f"{start}..{end}",
             "spin_mode": spin_mode,
-            "expression": expression_map.get(mode, mode),
+            "expression": f"{start}..{end}",
+            # Keep the structured legacy fields so settings written by this
+            # version can still be read by older builds.
+            "start_anchor": "HOMO",
+            "start_offset": start_offset,
+            "end_anchor": "LUMO",
+            "end_offset": end_offset,
         }
 
     def _selection_controls_changed(self, _value: object = None) -> None:
-        custom = str(self.preset_combo.currentData() or "") == "frontier_range"
         for widget in (
-            self.start_anchor_combo,
-            self.start_offset_spin,
-            self.end_anchor_combo,
-            self.end_offset_spin,
+            self.start_offset_combo,
+            self.end_offset_combo,
         ):
-            widget.setEnabled(custom and not bool(self.manual_expression_edit.text().strip()))
+            widget.setEnabled(not bool(self.manual_expression_edit.text().strip()))
         self._refresh_selection_preview()
         self._configuration_changed()
 
@@ -1332,8 +1357,12 @@ class OrbitalDiagramPage(QWidget):
             "selection_mode": str(spec.get("mode") or ""),
             "selection_expression": str(spec.get("expression") or ""),
             "selection_text": str(spec.get("text") or ""),
-            "start_offset": int(spec.get("start_offset", self.start_offset_spin.value())),
-            "end_offset": int(spec.get("end_offset", self.end_offset_spin.value())),
+            "start_offset": int(
+                spec.get("start_offset", self._offset_value(self.start_offset_combo, -1))
+            ),
+            "end_offset": int(
+                spec.get("end_offset", self._offset_value(self.end_offset_combo, 3))
+            ),
             "spin_mode": str(spec.get("spin_mode") or "auto"),
             "orbital_selections": copy.deepcopy(selections),
             "selected_orbitals": copy.deepcopy(selections),
@@ -1944,26 +1973,82 @@ class OrbitalDiagramPage(QWidget):
                 or saved.get("selection_expression")
                 or ""
             )
-            preset_index = self.preset_combo.findData(mode)
-            if preset_index >= 0:
-                self.preset_combo.setCurrentIndex(preset_index)
-            elif expression == "HOMO-1..LUMO+3":
-                self.preset_combo.setCurrentIndex(
-                    self.preset_combo.findData("homo_minus_1_to_lumo_plus_3")
+            legacy_expressions = {
+                "homo": "HOMO",
+                "lumo": "LUMO",
+                "homo_lumo": "HOMO,LUMO",
+                "homo_minus_1_to_lumo_plus_3": "HOMO-1..LUMO+3",
+            }
+            if not expression:
+                expression = legacy_expressions.get(mode, "")
+            self.manual_expression_edit.clear()
+            range_match = re.fullmatch(
+                r"\s*HOMO(?:([+-]\d+))?\s*\.\.\s*LUMO(?:([+-]\d+))?\s*",
+                expression,
+                flags=re.IGNORECASE,
+            )
+            start_anchor = str(selection.get("start_anchor") or "HOMO").upper()
+            end_anchor = str(selection.get("end_anchor") or "LUMO").upper()
+            has_structured_range = any(
+                key in selection
+                for key in ("start_anchor", "start_offset", "end_anchor", "end_offset")
+            )
+            has_top_level_offsets = "start_offset" in saved or "end_offset" in saved
+            fixed_frontier_range = (
+                mode in {"frontier_range", "homo_minus_1_to_lumo_plus_3"}
+                or (
+                    mode in {"", "custom", "text", "manual"}
+                    and start_anchor == "HOMO"
+                    and end_anchor == "LUMO"
+                    and (has_structured_range or range_match is not None)
                 )
-            elif expression and expression not in {"HOMO", "LUMO", "HOMO,LUMO"}:
-                self.manual_expression_edit.setText(expression)
+                or (
+                    not mode
+                    and has_top_level_offsets
+                    and (not expression or range_match is not None)
+                )
+            )
+            if fixed_frontier_range:
+                matched_start = (
+                    int(range_match.group(1) or 0)
+                    if range_match
+                    else -1
+                )
+                matched_end = (
+                    int(range_match.group(2) or 0)
+                    if range_match
+                    else 3
+                )
+                self._set_offset_combo(
+                    self.start_offset_combo,
+                    int(
+                        selection.get(
+                            "start_offset", saved.get("start_offset", matched_start)
+                        )
+                    ),
+                )
+                self._set_offset_combo(
+                    self.end_offset_combo,
+                    int(
+                        selection.get(
+                            "end_offset", saved.get("end_offset", matched_end)
+                        )
+                    ),
+                )
+            else:
+                manual_expression = expression
+                if not manual_expression and has_structured_range:
+                    start_offset = int(selection.get("start_offset", 0))
+                    end_offset = int(selection.get("end_offset", 0))
+                    manual_expression = (
+                        f"{self._frontier_text(start_anchor, start_offset)}.."
+                        f"{self._frontier_text(end_anchor, end_offset)}"
+                    )
+                if manual_expression:
+                    self.manual_expression_edit.setText(manual_expression)
             spin_mode = str(selection.get("spin_mode") or saved.get("spin_mode") or "auto")
             spin_index = self.spin_combo.findData(spin_mode)
             self.spin_combo.setCurrentIndex(max(0, spin_index))
-            for key, combo, spin in (
-                ("start_anchor", self.start_anchor_combo, self.start_offset_spin),
-                ("end_anchor", self.end_anchor_combo, self.end_offset_spin),
-            ):
-                index = combo.findData(str(selection.get(key) or combo.currentData()))
-                combo.setCurrentIndex(max(0, index))
-                offset_key = key.replace("anchor", "offset")
-                spin.setValue(max(-50, min(50, int(selection.get(offset_key, spin.value())))))
         except (TypeError, ValueError):
             pass
         finally:

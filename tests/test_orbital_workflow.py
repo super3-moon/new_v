@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -281,6 +283,58 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             self.assertFalse(inside.exists())
             self.assertTrue(outside.exists())
 
+    def test_process_completion_marker_is_opt_in_and_terminates_hosted_vmd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = self._plan(root)
+            runner = workflow.OrbitalDiagramRunner(
+                plan, Path(sys.executable), Path(sys.executable)
+            )
+            job = plan.jobs[0]
+            marker = root / "capture.confirmed"
+            log = root / "hosted.log"
+            command = [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; import sys, time; "
+                    "Path(sys.argv[1]).write_text('done', encoding='utf-8'); "
+                    "time.sleep(30)"
+                ),
+                str(marker),
+            ]
+            started = time.monotonic()
+            return_code, reason = runner._run_process(
+                command,
+                cwd=root,
+                env={},
+                stdin_text=None,
+                timeout_seconds=20,
+                log_path=log,
+                source="VMD",
+                job=job,
+                hide_window=True,
+                completion_markers={"viewpoint_confirmed": marker},
+            )
+            self.assertEqual(reason, "viewpoint_confirmed")
+            self.assertNotEqual(return_code, 0)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertIn("viewpoint_confirmed", log.read_text(encoding="utf-8"))
+
+            plain_log = root / "plain.log"
+            return_code, reason = runner._run_process(
+                [sys.executable, "-c", "print('ok')"],
+                cwd=root,
+                env={},
+                stdin_text=None,
+                timeout_seconds=20,
+                log_path=plain_log,
+                source="test",
+                job=job,
+                hide_window=True,
+            )
+            self.assertEqual((return_code, reason), (0, ""))
+
 
 class OrbitalVmdTests(unittest.TestCase):
     @staticmethod
@@ -362,6 +416,22 @@ class OrbitalVmdTests(unittest.TestCase):
             self.assertIn("MATERIAL", script)
             self.assertIn("REP", script)
             self.assertIn("MolecularStudio managed native state", script)
+            self.assertIn("set ::MO_CANCEL_PATH", script)
+            self.assertIn("set ::MO_ERROR_PATH", script)
+            self.assertIn("_mo_write_marker $::MO_CANCEL_PATH cancelled", script)
+            self.assertNotIn("    quit\n", script)
+            self.assertNotIn("    exit\n", script)
+
+    def test_capture_marker_paths_are_paired_without_replacing_suffix(self) -> None:
+        state = Path("work") / "viewpoint.capture"
+        self.assertEqual(
+            orbital_vmd.capture_cancel_marker_path(state),
+            Path("work") / "viewpoint.capture.cancelled",
+        )
+        self.assertEqual(
+            orbital_vmd.capture_error_log_path(state),
+            Path("work") / "viewpoint.capture.error.log",
+        )
 
     def test_batch_script_uses_tachyon_and_managed_native_state(self) -> None:
         source = Path("orbital_vmd.py").read_text(encoding="utf-8")
