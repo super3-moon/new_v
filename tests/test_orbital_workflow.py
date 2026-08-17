@@ -178,6 +178,59 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             exact.write_text("right", encoding="ascii")
             self.assertEqual(workflow._fallback_cube_for_index(root, 17), exact)
 
+    def test_single_job_progress_reports_useful_weighted_stages(self) -> None:
+        events: list[dict] = []
+
+        class StageRunner(workflow.OrbitalDiagramRunner):
+            def _run_job(self, job: workflow.OrbitalDiagramJob) -> None:
+                self._set_stage(job, workflow.STAGE_PARSE, "正在读取输入文件")
+                self._set_stage(job, workflow.STAGE_RENDER, "正在渲染轨道图像")
+                job.status = workflow.STATUS_SUCCESS
+                job.error = ""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            plan = self._plan(Path(temporary))
+            runner = StageRunner(
+                plan, Path(__file__), Path(__file__), event_callback=events.append
+            )
+            runner.run()
+
+        progress = [event for event in events if event["kind"] == "progress"]
+        percentages = [float(event["percent"]) for event in progress]
+        self.assertGreaterEqual(len(percentages), 3)
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertTrue(any(0.0 < value < 100.0 for value in percentages))
+        self.assertIn(workflow.STAGE_PARSE, {event.get("stage") for event in progress})
+        self.assertIn(workflow.STAGE_RENDER, {event.get("stage") for event in progress})
+        self.assertEqual(percentages[-1], 100.0)
+
+    def test_energy_anomaly_only_warns_for_an_isolated_endpoint(self) -> None:
+        anomaly = workflow.detect_energy_spacing_anomaly(
+            [
+                {"label": "HOMO-9", "energy_ev": -60.0},
+                {"label": "HOMO-2", "energy_ev": -8.2},
+                {"label": "HOMO-1", "energy_ev": -7.9},
+                {"label": "HOMO", "energy_ev": -7.5},
+            ]
+        )
+        self.assertIsNotNone(anomaly)
+        assert anomaly is not None
+        self.assertEqual(anomaly["isolated_labels"], ["HOMO-9"])
+        self.assertGreater(float(anomaly["gap_ev"]), 50.0)
+
+        # A large but legitimate occupied/virtual separation has levels on
+        # both sides, so it must not be mistaken for one accidental outlier.
+        self.assertIsNone(
+            workflow.detect_energy_spacing_anomaly(
+                [
+                    {"label": "HOMO-1", "energy_ev": -8.0},
+                    {"label": "HOMO", "energy_ev": -7.8},
+                    {"label": "LUMO", "energy_ev": -1.5},
+                    {"label": "LUMO+1", "energy_ev": -1.2},
+                ]
+            )
+        )
+
     def test_targeted_retry_preserves_unselected_jobs_and_global_failure(self) -> None:
         events: list[dict] = []
 
@@ -440,6 +493,7 @@ class OrbitalVmdTests(unittest.TestCase):
 
     def test_interactive_vmd_viewport_is_not_the_render_resolution(self) -> None:
         self.assertEqual(workflow.INTERACTIVE_VMD_VIEWPORT, (1160, 640))
+        self.assertEqual(workflow.INTERACTIVE_VMD_WINDOW, (1180, 700))
         settings = workflow.OrbitalDiagramSettings.from_value(
             {"width": 1600, "height": 1200, "style_snapshot": signed_style_snapshot()}
         )

@@ -7,12 +7,13 @@ import inspect
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import orbital_data
 import vmd_style_tool as core
-from PySide6.QtCore import QObject, QPoint, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -611,7 +612,16 @@ class OrbitalDiagramPage(QWidget):
         self.input_worker: OrbitalInputWorker | None = None
         self._input_generation = 0
         self._input_busy = False
+        self._run_started_monotonic = 0.0
+        self._row_started_monotonic: dict[str, float] = {}
+        self._progress_ceiling = 0
+        self._progress_stage_text = "等待开始"
+        self._last_progress_message = ""
+        self._last_progress_tick = 0.0
         self._build_ui()
+        self._runtime_timer = QTimer(self)
+        self._runtime_timer.setInterval(1000)
+        self._runtime_timer.timeout.connect(self._tick_runtime)
         self._select_default_style()
         self._refresh_selection_preview()
 
@@ -941,8 +951,9 @@ class OrbitalDiagramPage(QWidget):
         self.run_state_label.setWordWrap(True)
         state_row.addWidget(self.run_state_label, 1)
         self.progress = QProgressBar()
-        self.progress.setRange(0, 1)
+        self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.progress.setFormat("0% · 等待开始")
         self.progress.setMinimumWidth(250)
         state_row.addWidget(self.progress)
         state_layout.addLayout(state_row)
@@ -1806,7 +1817,59 @@ class OrbitalDiagramPage(QWidget):
             self.queue_table.setItem(row, 2, QTableWidgetItem("等待"))
             self.queue_table.setItem(row, 3, QTableWidgetItem("待运行"))
             self.queue_table.setItem(row, 4, QTableWidgetItem("-"))
-            self.queue_table.setItem(row, 5, QTableWidgetItem("等待创建轨道 Cube"))
+            self.queue_table.setItem(row, 5, QTableWidgetItem("等待开始"))
+
+    def _energy_anomaly_reports(self, settings: dict[str, Any]) -> list[str]:
+        try:
+            workflow = importlib.import_module("orbital_diagram_workflow")
+            detector = getattr(workflow, "detect_energy_spacing_anomaly")
+        except (ImportError, AttributeError):
+            return []
+        reports: list[str] = []
+        for selection in list(settings.get("orbital_selections") or []):
+            if not isinstance(selection, dict):
+                continue
+            orbitals = [
+                item
+                for item in list(selection.get("orbitals") or [])
+                if isinstance(item, dict)
+            ]
+            anomaly = detector(orbitals)
+            if not isinstance(anomaly, dict):
+                continue
+            labels = "、".join(str(value) for value in anomaly.get("isolated_labels") or [])
+            neighbor = "、".join(str(value) for value in anomaly.get("neighbor_labels") or [])
+            try:
+                gap = float(anomaly.get("gap_ev") or 0.0)
+                isolated_energy = float(anomaly.get("isolated_energy_ev") or 0.0)
+                neighbor_energy = float(anomaly.get("neighbor_energy_ev") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            task = str(selection.get("label") or Path(str(selection.get("wavefunction_path") or "任务")).stem)
+            reports.append(
+                f"{task}：{labels or '某个轨道'}（{isolated_energy:.2f} eV）与相邻的"
+                f"{neighbor or '轨道'}（{neighbor_energy:.2f} eV）相差 {gap:.2f} eV"
+            )
+        return reports
+
+    def _confirm_energy_spacing(self, settings: dict[str, Any]) -> bool:
+        reports = self._energy_anomaly_reports(settings)
+        if not reports:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("轨道能量范围异常")
+        box.setText("检测到一个轨道与其余所选轨道的能量差距异常大。")
+        box.setInformativeText(
+            "\n".join(reports[:3])
+            + "\n\n这通常意味着选中了深层轨道、轨道编号不符合预期，或输入文件中的轨道顺序需要检查。"
+            "继续仍可生成图片，但能级间距会被压缩显示。"
+        )
+        inspect_button = box.addButton("返回检查", QMessageBox.ButtonRole.RejectRole)
+        continue_button = box.addButton("仍然继续", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(inspect_button)
+        box.exec()
+        return box.clickedButton() is continue_button
 
     def _start_run(self) -> None:
         self._start_worker(None)
@@ -1834,6 +1897,8 @@ class OrbitalDiagramPage(QWidget):
                 settings = {}
             else:
                 pairs, output_root, multi, vmd, settings = self._validated_inputs(pair_override)
+                if not self._confirm_energy_spacing(settings):
+                    return
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "无法开始", str(exc))
             return
@@ -1872,8 +1937,16 @@ class OrbitalDiagramPage(QWidget):
                 )
                 self.queue_table.selectRow(matching_row)
         self.run_log.clear()
-        self.progress.setRange(0, max(1, len(pairs)))
+        self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.progress.setFormat("0% · 正在启动")
+        self._progress_ceiling = 2
+        self._progress_stage_text = "正在启动"
+        self._run_started_monotonic = time.monotonic()
+        self._last_progress_tick = self._run_started_monotonic
+        self._row_started_monotonic.clear()
+        self._last_progress_message = ""
+        self._runtime_timer.start()
         self.run_state_label.setText(
             "正在准备参考轨道。VMD 打开后自由调整一切，最后点“保存全部参数并确认”。"
         )
@@ -1882,6 +1955,8 @@ class OrbitalDiagramPage(QWidget):
         self.start_button.setEnabled(False)
         self.open_results_button.setEnabled(False)
         self.page_stack.setCurrentIndex(1)
+        if self.queue_table.rowCount() and not self.queue_table.selectedItems():
+            self.queue_table.selectRow(0)
         self._configuration_changed()
 
         self.thread = QThread(self)
@@ -1902,6 +1977,36 @@ class OrbitalDiagramPage(QWidget):
         self.worker.finished.connect(lambda _result, _error: self.thread.quit() if self.thread else None)
         self.thread.finished.connect(self._cleanup_thread)
         self.thread.start()
+
+    def _tick_runtime(self) -> None:
+        now = time.monotonic()
+        for row in range(self.queue_table.rowCount()):
+            status_item = self.queue_table.item(row, 3)
+            if status_item is None or status_item.text() != "进行中":
+                continue
+            task_item = self.queue_table.item(row, 0)
+            key = str(
+                task_item.data(Qt.ItemDataRole.UserRole + 1) or row
+                if task_item is not None
+                else row
+            )
+            started = self._row_started_monotonic.setdefault(
+                key, self._run_started_monotonic or now
+            )
+            self.queue_table.setItem(
+                row,
+                4,
+                QTableWidgetItem(f"{max(0.0, now - started):.0f} 秒"),
+            )
+        if self.is_running() and self.progress.value() < self._progress_ceiling:
+            elapsed = now - self._last_progress_tick
+            steps = int(elapsed // 4.0)
+            if steps > 0:
+                self.progress.setValue(
+                    min(self._progress_ceiling, self.progress.value() + steps)
+                )
+                self.progress.setFormat(f"%p% · {self._progress_stage_text}")
+                self._last_progress_tick += steps * 4.0
 
     def _append_log(self, text: str) -> None:
         clean = str(text).rstrip()
@@ -2016,6 +2121,8 @@ class OrbitalDiagramPage(QWidget):
         }:
             return
         visible_summary_kinds = {
+            "run_started",
+            "pair_stage",
             "progress",
             "warning",
             "error",
@@ -2029,20 +2136,50 @@ class OrbitalDiagramPage(QWidget):
         display_text = text
         if normalized_kind in {"error", "failed"}:
             display_text = self._friendly_runtime_error(text)
-        if display_text and normalized_kind in visible_summary_kinds:
+        if normalized_kind == "orbital_stage" and not display_text:
+            orbital = event.get("orbital")
+            orbital_dict = orbital if isinstance(orbital, dict) else _as_dict(orbital)
+            current_orbital = event.get("current", 0)
+            total_orbitals = event.get("total", 0)
+            display_text = (
+                f"正在渲染 {orbital_dict.get('label') or '轨道'}"
+                f"（{current_orbital}/{total_orbitals}）"
+            )
+        if (
+            display_text
+            and normalized_kind in visible_summary_kinds
+            and display_text != self._last_progress_message
+        ):
             self._append_log(display_text)
+            self._last_progress_message = display_text
         if event.get("run_dir"):
             self.last_run_dir = str(event["run_dir"])
             self.open_results_button.setEnabled(True)
+        if normalized_kind == "run_started":
+            total_tasks = int(event.get("total") or len(self._active_pairs) or 1)
+            self.run_state_label.setText(f"流程已开始，共 {total_tasks} 个任务。")
+            if not display_text:
+                self._append_log(f"流程已开始，共 {total_tasks} 个任务。")
         current = event.get("current", event.get("completed"))
         total = event.get("total")
-        if kind == "progress" and current is not None:
+        if normalized_kind == "progress":
             try:
-                total_value = int(total or len(self._active_pairs) or 1)
-                self.progress.setRange(0, max(1, total_value))
-                self.progress.setValue(max(0, min(int(current), total_value)))
+                if event.get("percent") is not None:
+                    percent = int(round(float(event.get("percent") or 0.0)))
+                else:
+                    total_value = int(total or len(self._active_pairs) or 1)
+                    percent = int(round(int(current or 0) / max(1, total_value) * 100.0))
+                ceiling = int(round(float(event.get("ceiling_percent", percent) or percent)))
+                self._progress_ceiling = max(percent, min(100, ceiling))
+                stage_text = self._friendly_stage(event.get("stage"))
+                self._progress_stage_text = stage_text
+                self._last_progress_tick = time.monotonic()
+                self.progress.setRange(0, 100)
+                self.progress.setValue(max(self.progress.value(), max(0, min(100, percent))))
+                self.progress.setFormat(f"%p% · {stage_text}")
             except (TypeError, ValueError):
                 pass
+            return
         row = self._event_row(event)
         if row >= 0:
             raw_stage = str(event.get("stage") or "")
@@ -2062,6 +2199,16 @@ class OrbitalDiagramPage(QWidget):
             }.get(status.casefold(), "状态未知")
             self.queue_table.setItem(row, 2, QTableWidgetItem(stage_text))
             self.queue_table.setItem(row, 3, QTableWidgetItem(status_text))
+            if status_text == "进行中":
+                task_item = self.queue_table.item(row, 0)
+                row_key = str(
+                    task_item.data(Qt.ItemDataRole.UserRole + 1) or row
+                    if task_item is not None
+                    else row
+                )
+                self._row_started_monotonic.setdefault(
+                    row_key, self._run_started_monotonic or time.monotonic()
+                )
             if display_text:
                 self.queue_table.setItem(row, 5, QTableWidgetItem(display_text))
             elapsed = event.get("elapsed_seconds", event.get("duration_seconds"))
@@ -2077,9 +2224,14 @@ class OrbitalDiagramPage(QWidget):
             )
             if image_path:
                 item = self.queue_table.item(row, 5) or QTableWidgetItem()
-                item.setText(str(image_path))
+                item.setText(display_text or "已生成轨道预览")
                 item.setData(Qt.ItemDataRole.UserRole, str(image_path))
                 self.queue_table.setItem(row, 5, item)
+        if normalized_kind == "pair_stage":
+            stage_text = self._friendly_stage(event.get("stage"))
+            self.run_state_label.setText(
+                f"当前进度：{stage_text}" + (f" — {display_text}" if display_text else "")
+            )
         if kind == "viewpoint_required":
             self.run_state_label.setText(
                 "VMD 已打开：自由调整一切，最后点“保存全部参数并确认”。"
@@ -2097,11 +2249,13 @@ class OrbitalDiagramPage(QWidget):
     @Slot(object, object)
     def _on_worker_finished(self, result: object, error: object) -> None:
         self.last_result = result
+        self._runtime_timer.stop()
         self.cancel_button.setEnabled(False)
         self.start_button.setEnabled(True)
         jobs = self._result_jobs(result)
         if error is not None:
             friendly_error = self._friendly_runtime_error(error)
+            self.progress.setFormat(f"%p% · 运行失败")
             self.run_state_label.setText(f"运行失败：{friendly_error}")
             self._append_log(f"运行失败：{friendly_error}")
             for row in range(self.queue_table.rowCount()):
@@ -2151,7 +2305,7 @@ class OrbitalDiagramPage(QWidget):
             message = (
                 self._friendly_runtime_error(job_dict.get("error"))
                 if job_dict.get("error")
-                else image_path or "完成"
+                else "能级图已生成" if image_path else "完成"
             )
             result_item = QTableWidgetItem(message)
             if image_path:
@@ -2165,7 +2319,9 @@ class OrbitalDiagramPage(QWidget):
             self.run_state_label.setText("运行记录已更新，但没有找到与当前队列匹配的任务。")
             self.retry_button.setEnabled(False)
             return
-        self.progress.setValue(self.progress.maximum())
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.progress.setFormat("100% · 已完成")
         remaining_failures = sum(
             1
             for row in range(self.queue_table.rowCount())

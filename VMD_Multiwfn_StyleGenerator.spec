@@ -25,6 +25,7 @@ a = Analysis(
         'orbital_vmd',
         'PIL',
         'PIL.Image',
+        'PIL.ImageChops',
         'PIL.ImageDraw',
         'PIL.ImageFont',
         'PIL.PngImagePlugin',

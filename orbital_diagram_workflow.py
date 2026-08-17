@@ -10,6 +10,7 @@ recoverable pipeline, process lifecycle, result collection and final diagram.
 from __future__ import annotations
 
 import copy
+import ctypes
 import csv
 import hashlib
 import json
@@ -56,6 +57,23 @@ STAGE_COLLECT = "collecting"
 # The OpenGL window is an editing surface, not the requested Tachyon output.
 # 1160x640 matches a comfortable, non-maximized VMD window on a 1080p desktop.
 INTERACTIVE_VMD_VIEWPORT = (1160, 640)
+INTERACTIVE_VMD_WINDOW = (1180, 700)
+
+# Coarse milestones are intentionally weighted by the work users wait for,
+# rather than by the number of Python functions in the pipeline.  The UI may
+# gently advance between a milestone and its ceiling so a one-file run never
+# looks frozen at 0% for several minutes.
+STAGE_PROGRESS = {
+    STAGE_PARSE: (2.0, 7.0),
+    STAGE_RESOLVE: (7.0, 11.0),
+    STAGE_REFERENCE_CUBE: (11.0, 23.0),
+    STAGE_VIEWPOINT: (23.0, 34.0),
+    STAGE_ORBITAL_CUBES: (34.0, 52.0),
+    STAGE_CUBE_VALIDATION: (52.0, 58.0),
+    STAGE_RENDER: (58.0, 89.0),
+    STAGE_COMPOSE: (89.0, 96.0),
+    STAGE_COLLECT: (96.0, 99.0),
+}
 
 RETRY_STAGES = {
     STAGE_PARSE,
@@ -136,6 +154,78 @@ def _json_hash(value: object) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def detect_energy_spacing_anomaly(
+    orbitals: Sequence[Mapping[str, object] | orbital_data.OrbitalRef],
+) -> dict[str, object] | None:
+    """Detect one isolated frontier level that would dominate a diagram.
+
+    Alpha/beta partners and ordinary near-degeneracies are clustered first.
+    A warning is returned only when an endpoint cluster is separated from all
+    remaining selected levels by both a sizeable absolute gap and a gap far
+    larger than the normal spacings inside the remaining group.  This avoids
+    warning merely because a molecule has a legitimate HOMO-LUMO gap.
+    """
+
+    points: list[tuple[float, str]] = []
+    for item in orbitals:
+        if isinstance(item, Mapping):
+            raw_energy = item.get("energy_ev")
+            label = str(item.get("label") or "未命名轨道")
+        else:
+            raw_energy = item.energy_ev
+            label = item.label
+        try:
+            value = float(raw_energy)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            points.append((value, label))
+    if len(points) < 3:
+        return None
+
+    clusters: list[list[tuple[float, str]]] = []
+    for point in sorted(points, key=lambda entry: entry[0]):
+        if clusters and abs(point[0] - sum(v for v, _ in clusters[-1]) / len(clusters[-1])) <= 0.03:
+            clusters[-1].append(point)
+        else:
+            clusters.append([point])
+    if len(clusters) < 3:
+        return None
+
+    centers = [sum(value for value, _ in group) / len(group) for group in clusters]
+    gaps = [centers[index + 1] - centers[index] for index in range(len(centers) - 1)]
+    largest_index = max(range(len(gaps)), key=gaps.__getitem__)
+    largest_gap = gaps[largest_index]
+    isolated_low = largest_index == 0
+    isolated_high = largest_index == len(clusters) - 2
+    if not (isolated_low or isolated_high):
+        return None
+    ordinary = sorted(gap for index, gap in enumerate(gaps) if index != largest_index and gap > 1.0e-9)
+    if ordinary:
+        midpoint = len(ordinary) // 2
+        baseline = (
+            ordinary[midpoint]
+            if len(ordinary) % 2
+            else (ordinary[midpoint - 1] + ordinary[midpoint]) / 2.0
+        )
+        threshold = max(3.0, baseline * 4.0)
+    else:
+        threshold = 12.0
+    if largest_gap < threshold:
+        return None
+
+    isolated_cluster = clusters[0] if isolated_low else clusters[-1]
+    neighbor_cluster = clusters[1] if isolated_low else clusters[-2]
+    return {
+        "gap_ev": largest_gap,
+        "isolated_energy_ev": centers[0] if isolated_low else centers[-1],
+        "neighbor_energy_ev": centers[1] if isolated_low else centers[-2],
+        "isolated_labels": [label for _value, label in isolated_cluster],
+        "neighbor_labels": [label for _value, label in neighbor_cluster],
+        "direction": "low" if isolated_low else "high",
+    }
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
@@ -655,10 +745,44 @@ class OrbitalDiagramRunner:
         self._cancel_event = threading.Event()
         self._process_lock = threading.Lock()
         self._active_process: subprocess.Popen[str] | None = None
+        self._active_job_position = 0
+        self._active_job_total = 1
 
     def _emit(self, kind: str, **payload: object) -> None:
         if self.event_callback is not None:
             self.event_callback({"kind": kind, **payload})
+
+    def _overall_progress(self, local_percent: float) -> float:
+        local = max(0.0, min(100.0, float(local_percent)))
+        total = max(1, int(self._active_job_total))
+        return max(
+            0.0,
+            min(100.0, (self._active_job_position + local / 100.0) / total * 100.0),
+        )
+
+    def _emit_progress(
+        self,
+        job: OrbitalDiagramJob,
+        local_percent: float,
+        *,
+        ceiling_local: float | None = None,
+        stage: str | None = None,
+        message: str = "",
+    ) -> None:
+        ceiling = local_percent if ceiling_local is None else ceiling_local
+        self._emit(
+            "progress",
+            percent=round(self._overall_progress(local_percent), 2),
+            ceiling_percent=round(self._overall_progress(ceiling), 2),
+            completed=self._active_job_position,
+            total=max(1, self._active_job_total),
+            index=job.index,
+            job_id=job.id,
+            wavefunction_path=str(job.pair.wavefunction_path),
+            stage=stage or job.stage,
+            status=job.status,
+            message=message,
+        )
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -711,11 +835,14 @@ class OrbitalDiagramRunner:
             if self.plan.resume and self.plan.retry_job_ids
             else len(self.plan.jobs)
         )
+        self._active_job_total = max(1, active_total)
+        self._active_job_position = 0
         self._emit(
             "run_started",
             workflow=WORKFLOW_ID,
             run_dir=str(self.plan.run_dir),
             total=active_total,
+            percent=0.0,
         )
         completed = 0
         for job in self.plan.jobs:
@@ -727,31 +854,44 @@ class OrbitalDiagramRunner:
                 continue
             if self.plan.resume and job.status == STATUS_SKIPPED:
                 completed += 1
+                self._active_job_position = completed
                 self._emit(
                     "progress", completed=completed, total=active_total,
+                    percent=round(completed / max(1, active_total) * 100.0, 2),
+                    ceiling_percent=round(completed / max(1, active_total) * 100.0, 2),
                     index=job.index, job_id=job.id,
                     wavefunction_path=str(job.pair.wavefunction_path),
                 )
                 continue
             if self.plan.resume and job.status == STATUS_SUCCESS and not self.plan.retry_stages:
                 completed += 1
+                self._active_job_position = completed
                 self._emit(
                     "progress", completed=completed, total=active_total,
+                    percent=round(completed / max(1, active_total) * 100.0, 2),
+                    ceiling_percent=round(completed / max(1, active_total) * 100.0, 2),
                     index=job.index, job_id=job.id,
                     wavefunction_path=str(job.pair.wavefunction_path),
                 )
                 continue
+            self._active_job_position = completed
             if self._cancel_event.is_set():
                 job.status = STATUS_CANCELLED
                 job.error = "流程已由用户停止。"
             else:
                 self._run_job(job)
             completed += 1
+            self._active_job_position = completed
             self._write_manifest()
             self._emit(
                 "progress", completed=completed, total=active_total,
+                percent=round(completed / max(1, active_total) * 100.0, 2),
+                ceiling_percent=round(completed / max(1, active_total) * 100.0, 2),
                 index=job.index, job_id=job.id,
                 wavefunction_path=str(job.pair.wavefunction_path),
+                stage=job.stage,
+                status=job.status,
+                message=job.error or f"{job.pair.label} 已完成",
             )
         statuses = {job.status for job in self.plan.jobs}
         effective_statuses = statuses - {STATUS_SKIPPED}
@@ -792,6 +932,14 @@ class OrbitalDiagramRunner:
             wavefunction_path=str(job.pair.wavefunction_path),
             stage=stage,
             status=job.status,
+            message=message,
+        )
+        start, ceiling = STAGE_PROGRESS.get(stage, (0.0, 0.0))
+        self._emit_progress(
+            job,
+            start,
+            ceiling_local=ceiling,
+            stage=stage,
             message=message,
         )
 
@@ -1078,6 +1226,7 @@ class OrbitalDiagramRunner:
             source="VMD",
             job=job,
             hide_window=False,
+            show_window=True,
             completion_markers={
                 "viewpoint_confirmed": protocol,
                 "viewpoint_cancelled": cancel_marker,
@@ -1173,6 +1322,7 @@ class OrbitalDiagramRunner:
             and reference_cube.is_file()
         )
         total = len(refs)
+        render_start, render_end = STAGE_PROGRESS[STAGE_RENDER]
         for number, ref in enumerate(refs, 1):
             if self._cancel_event.is_set():
                 raise _Cancelled
@@ -1180,6 +1330,14 @@ class OrbitalDiagramRunner:
             existing = Path(job.images.get(key, ""))
             if existing.is_file() and existing.stat().st_size > 64:
                 job.render_status[key] = STATUS_SUCCESS
+                local = render_start + (render_end - render_start) * number / max(1, total)
+                self._emit_progress(
+                    job,
+                    local,
+                    ceiling_local=local,
+                    stage=STAGE_RENDER,
+                    message=f"已复用 {ref.label} 的轨道图像",
+                )
                 continue
             safe = _orbital_artifact_stem(ref)
             tga = render_dir / f"{safe}.tga"
@@ -1207,6 +1365,15 @@ class OrbitalDiagramRunner:
                 total=total,
                 stage=STAGE_RENDER,
                 status=STATUS_RUNNING,
+            )
+            local_before = render_start + (render_end - render_start) * (number - 1) / max(1, total)
+            local_after = render_start + (render_end - render_start) * number / max(1, total)
+            self._emit_progress(
+                job,
+                local_before,
+                ceiling_local=max(local_before, local_after - 0.5),
+                stage=STAGE_RENDER,
+                message=f"正在渲染 {ref.label}（{number}/{total}）",
             )
             return_code, reason = self._run_process(
                 [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(tcl)],
@@ -1245,6 +1412,13 @@ class OrbitalDiagramRunner:
                 status=STATUS_SUCCESS,
                 image_path=str(png.resolve()),
             )
+            self._emit_progress(
+                job,
+                local_after,
+                ceiling_local=local_after,
+                stage=STAGE_RENDER,
+                message=f"已完成 {ref.label}（{number}/{total}）",
+            )
 
     @staticmethod
     def _pillow():
@@ -1270,8 +1444,8 @@ class OrbitalDiagramRunner:
     @staticmethod
     def _font(ImageFont, size: int, *, bold: bool = False):
         candidates = [
-            Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / ("segoeuib.ttf" if bold else "segoeui.ttf"),
             Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / ("msyhbd.ttc" if bold else "msyh.ttc"),
+            Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / ("segoeuib.ttf" if bold else "segoeui.ttf"),
             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         ]
         for path in candidates:
@@ -1293,146 +1467,252 @@ class OrbitalDiagramRunner:
         if job.diagram_path and existing.is_file() and existing.stat().st_size > 64:
             return
         Image, ImageDraw, ImageFont = self._pillow()
+        from PIL import ImageChops
+
         groups: dict[str, list[orbital_data.OrbitalRef]] = {}
         for ref in refs:
             groups.setdefault(_enum_value(ref.spin), []).append(ref)
         unrestricted = dataset.is_unrestricted
         width = self.plan.settings.diagram_width
-        image_w = max(240, min(430, width // (4 if unrestricted else 3)))
-        image_h = int(image_w * self.plan.settings.height / self.plan.settings.width)
+        image_w = max(270, min(350, width // 5))
+        image_h = max(
+            150,
+            min(
+                245,
+                int(image_w * self.plan.settings.height / self.plan.settings.width),
+            ),
+        )
+        card_w, card_h = image_w + 28, image_h + 28
+        row_gap = card_h + 74
         largest = max(len(group) for group in groups.values())
-        energies_ev = [ref.energy_ev for ref in refs]
-        energy_min, energy_max = min(energies_ev), max(energies_ev)
-        energy_span = max(energy_max - energy_min, 1.0e-9)
-        thumbnail_gap = max(175, image_h + 38)
-        # Preserve a common, linear energy scale for every spin channel.  The
-        # canvas grows for wider energy windows, while thumbnail slots are
-        # collision-managed independently and connected back to the true line.
-        energy_height = max(720, min(6200, int(energy_span * 92)))
-        content_height = max(energy_height, (largest - 1) * thumbnail_gap + image_h)
-        height = max(940, 250 + content_height)
+        content_top = 170
+        height = max(920, content_top + card_h + (largest - 1) * row_gap + 120)
         canvas = Image.new("RGB", (width, height), "white")
         draw = ImageDraw.Draw(canvas)
-        title_font = self._font(ImageFont, max(28, width // 55), bold=True)
-        header_font = self._font(ImageFont, max(22, width // 70), bold=True)
-        label_font = self._font(ImageFont, max(18, width // 85), bold=True)
-        small_font = self._font(ImageFont, max(15, width // 105))
-        draw.text((width // 2, 42), self.plan.settings.title, fill="#13273f", font=title_font, anchor="ma")
+        title_font = self._font(ImageFont, max(29, width // 56), bold=True)
+        header_font = self._font(ImageFont, max(22, width // 76), bold=True)
+        label_font = self._font(ImageFont, max(16, width // 100), bold=True)
+        small_font = self._font(ImageFont, max(13, width // 125))
+        note_font = self._font(ImageFont, max(12, width // 140))
+        draw.text(
+            (width // 2, 42),
+            self.plan.settings.title,
+            fill="#172b45",
+            font=title_font,
+            anchor="ma",
+        )
+        draw.line((58, 112, width - 58, 112), fill="#e2e8f0", width=2)
 
         def energy(ref: orbital_data.OrbitalRef) -> float:
-            return ref.energy_hartree if self.plan.settings.energy_unit == "Hartree" else ref.energy_ev
+            return (
+                ref.energy_hartree
+                if self.plan.settings.energy_unit == "Hartree"
+                else ref.energy_ev
+            )
 
         def energy_label(ref: orbital_data.OrbitalRef) -> str:
             suffix = "a.u." if self.plan.settings.energy_unit == "Hartree" else "eV"
             return f"{energy(ref):.{self.plan.settings.energy_decimals}f} {suffix}"
 
-        line_top = 150
-        line_bottom = height - 95
-
-        def true_y(ref: orbital_data.OrbitalRef) -> int:
-            if energy_span <= 1.0e-9:
-                return (line_top + line_bottom) // 2
-            return int(
-                round(
-                    line_top
-                    + (energy_max - ref.energy_ev)
-                    / energy_span
-                    * (line_bottom - line_top)
-                )
+        # Build visually compressed energy clusters.  Ordering remains exact,
+        # ordinary spacings remain visible, and a single extreme value can no
+        # longer push every useful frontier level to the canvas edge.
+        clusters: list[list[orbital_data.OrbitalRef]] = []
+        for ref in sorted(refs, key=lambda item: item.energy_ev, reverse=True):
+            if clusters:
+                center = sum(item.energy_ev for item in clusters[-1]) / len(clusters[-1])
+                if abs(ref.energy_ev - center) <= 0.03:
+                    clusters[-1].append(ref)
+                    continue
+            clusters.append([ref])
+        centers = [sum(item.energy_ev for item in group) / len(group) for group in clusters]
+        gaps = [max(0.0, centers[index] - centers[index + 1]) for index in range(len(centers) - 1)]
+        positive_gaps = sorted(gap for gap in gaps if gap > 1.0e-9)
+        typical_gap = positive_gaps[len(positive_gaps) // 2] if positive_gaps else 1.0
+        intra_cluster_spacing = 70.0
+        cluster_half_spans: list[float] = []
+        for cluster in clusters:
+            counts: dict[str, int] = {}
+            for ref in cluster:
+                channel = _enum_value(ref.spin)
+                counts[channel] = counts.get(channel, 0) + 1
+            largest_channel_count = max(counts.values(), default=1)
+            cluster_half_spans.append(
+                (largest_channel_count - 1) * intra_cluster_spacing / 2.0
             )
-
-        def collision_positions(
-            items: list[orbital_data.OrbitalRef], minimum_gap: int
-        ) -> dict[str, int]:
-            ordered = sorted(items, key=lambda item: (true_y(item), item.channel_index))
-            minimum = line_top + image_h // 2
-            maximum = line_bottom - image_h // 2
-            values: list[int] = []
-            for item in ordered:
-                candidate = max(minimum, true_y(item))
-                if values:
-                    candidate = max(candidate, values[-1] + minimum_gap)
-                values.append(candidate)
-            if values and values[-1] > maximum:
-                shift = values[-1] - maximum
-                values = [value - shift for value in values]
-                for index in range(len(values) - 2, -1, -1):
-                    values[index] = min(values[index], values[index + 1] - minimum_gap)
-                if values[0] < minimum:
-                    values = [minimum + index * minimum_gap for index in range(len(values))]
-            return {
-                _orbital_key(item): value for item, value in zip(ordered, values)
-            }
-
-        def label_positions(items: list[orbital_data.OrbitalRef]) -> dict[str, int]:
-            ordered = sorted(items, key=lambda item: (true_y(item), item.channel_index))
-            values: list[int] = []
-            for item in ordered:
-                candidate = true_y(item)
-                if values:
-                    candidate = max(candidate, values[-1] + 46)
-                values.append(candidate)
-            if values and values[-1] > line_bottom:
-                shift = values[-1] - line_bottom
-                values = [value - shift for value in values]
-            return {
-                _orbital_key(item): value for item, value in zip(ordered, values)
-            }
+        relative_positions = [0.0]
+        for gap_index, gap in enumerate(gaps):
+            extra = min(88.0, 34.0 * math.log1p(gap / max(typical_gap, 0.05)))
+            relative_positions.append(
+                relative_positions[-1]
+                + cluster_half_spans[gap_index]
+                + 78.0
+                + extra
+                + cluster_half_spans[gap_index + 1]
+            )
+        raw_span = (
+            (relative_positions[-1] if relative_positions else 0.0)
+            + (cluster_half_spans[0] if cluster_half_spans else 0.0)
+            + (cluster_half_spans[-1] if cluster_half_spans else 0.0)
+        )
+        level_start = (
+            (height - raw_span) / 2.0
+            + (cluster_half_spans[0] if cluster_half_spans else 0.0)
+            + 12.0
+        )
+        level_y: dict[str, int] = {}
+        for cluster_index, cluster in enumerate(clusters):
+            base_y = level_start + relative_positions[cluster_index]
+            by_channel: dict[str, list[orbital_data.OrbitalRef]] = {}
+            for ref in cluster:
+                by_channel.setdefault(_enum_value(ref.spin), []).append(ref)
+            for channel_items in by_channel.values():
+                ordered = sorted(channel_items, key=lambda item: item.energy_ev, reverse=True)
+                for index, ref in enumerate(ordered):
+                    offset = (
+                        index - (len(ordered) - 1) / 2.0
+                    ) * intra_cluster_spacing
+                    level_y[_orbital_key(ref)] = int(round(base_y + offset))
 
         if unrestricted:
+            center_x = width // 2
             layout = {
-                "alpha": (36, width // 2 - 190, width // 2 - 30, "α MOs"),
-                "beta": (width - image_w - 36, width // 2 + 30, width // 2 + 190, "β MOs"),
+                "alpha": (48, center_x - 255, center_x - 76, "α MOs", "#426b9c"),
+                "beta": (width - card_w - 48, center_x + 76, center_x + 255, "β MOs", "#66558f"),
             }
+            panel_left, panel_right = center_x - 310, center_x + 310
         else:
             channel = next(iter(groups))
-            layout = {channel: (70, width // 2 - 100, width // 2 + 230, "MOs")}
+            layout = {
+                channel: (64, width // 2 - 110, width // 2 + 110, "MOs", "#426b9c")
+            }
+            panel_left, panel_right = width // 2 - 175, width // 2 + 175
+        panel_top = max(134, min(level_y.values()) - 70)
+        panel_bottom = min(height - 74, max(level_y.values()) + 72)
+        draw.rounded_rectangle(
+            (panel_left, panel_top, panel_right, panel_bottom),
+            radius=22,
+            fill="#f8fafc",
+            outline="#dbe5ef",
+            width=2,
+        )
+
+        # All orbitals use one shared crop rectangle, preserving the user's
+        # captured orientation, scale and relative molecular placement.
+        source_images: dict[str, object] = {}
+        crop_box: tuple[int, int, int, int] | None = None
+        for ref in refs:
+            key = _orbital_key(ref)
+            with Image.open(job.images[key]) as opened:
+                source = opened.convert("RGB")
+            source_images[key] = source
+            white = Image.new("RGB", source.size, "white")
+            mask = ImageChops.difference(source, white).convert("L").point(
+                lambda value: 255 if value > 10 else 0
+            )
+            bounds = mask.getbbox()
+            if bounds:
+                crop_box = (
+                    bounds
+                    if crop_box is None
+                    else (
+                        min(crop_box[0], bounds[0]),
+                        min(crop_box[1], bounds[1]),
+                        max(crop_box[2], bounds[2]),
+                        max(crop_box[3], bounds[3]),
+                    )
+                )
+        if crop_box is not None:
+            source_width, source_height = next(iter(source_images.values())).size
+            padding = max(10, int(min(source_width, source_height) * 0.025))
+            crop_box = (
+                max(0, crop_box[0] - padding),
+                max(0, crop_box[1] - padding),
+                min(source_width, crop_box[2] + padding),
+                min(source_height, crop_box[3] + padding),
+            )
+
         for channel, items in groups.items():
-            image_x, line_a, line_b, header = layout[channel]
-            draw.text(((line_a + line_b) // 2, 92), header, fill="#13273f", font=header_font, anchor="ma")
-            thumbnail_y = collision_positions(items, thumbnail_gap)
-            label_y = label_positions(items)
-            for ref in sorted(items, key=lambda item: energy(item), reverse=True):
+            image_x, line_a, line_b, header, accent = layout[channel]
+            draw.text(
+                ((line_a + line_b) // 2, 136),
+                header,
+                fill=accent,
+                font=header_font,
+                anchor="ma",
+            )
+            ordered = sorted(items, key=lambda item: item.energy_ev, reverse=True)
+            group_offset = (largest - len(ordered)) * row_gap / 2.0
+            first_center = content_top + card_h / 2.0 + group_offset
+            for order, ref in enumerate(ordered):
                 key = _orbital_key(ref)
-                level_y = true_y(ref)
-                center_y = thumbnail_y[key]
-                with Image.open(job.images[key]) as source:
-                    picture = source.convert("RGB")
-                    picture.thumbnail((image_w, image_h), Image.Resampling.LANCZOS)
-                    px = image_x + (image_w - picture.width) // 2
-                    py = center_y - picture.height // 2
-                    canvas.paste(picture, (px, py))
-                draw.line((line_a, level_y, line_b, level_y), fill="#26384d", width=3)
-                image_is_left = image_x < line_a
-                image_edge = px + picture.width + 8 if image_is_left else px - 8
-                line_edge = line_a if image_is_left else line_b
-                elbow = line_edge - 48 if image_is_left else line_edge + 48
-                draw.line(
-                    (image_edge, center_y, elbow, center_y, elbow, level_y, line_edge, level_y),
-                    fill="#708198",
+                center_y = int(round(first_center + order * row_gap))
+                card_y = center_y - card_h // 2
+                draw.rounded_rectangle(
+                    (image_x, card_y, image_x + card_w, card_y + card_h),
+                    radius=18,
+                    fill="#fbfcfe",
+                    outline="#d8e2ed",
                     width=2,
                 )
-                if unrestricted and channel == "alpha":
-                    label_x, anchor = line_b + 12, "lm"
-                elif unrestricted and channel == "beta":
-                    label_x, anchor = line_a - 12, "rm"
-                else:
-                    label_x, anchor = line_b + 14, "lm"
-                text_y = label_y[key]
-                if text_y != level_y:
-                    draw.line((line_b, level_y, label_x, text_y), fill="#9aa8b8", width=1)
-                draw.text((label_x, text_y - 13), energy_label(ref), fill="#17283e", font=label_font, anchor=anchor)
-                meta = f"{ref.label} · MO {ref.channel_index}"
-                draw.text((label_x, text_y + 16), meta, fill="#5d7087", font=small_font, anchor=anchor)
-                arrow_x = (line_a + line_b) // 2
+                picture = source_images[key]
+                if crop_box is not None:
+                    picture = picture.crop(crop_box)
+                picture.thumbnail((image_w, image_h), Image.Resampling.LANCZOS)
+                px = image_x + (card_w - picture.width) // 2
+                py = center_y - picture.height // 2
+                canvas.paste(picture, (px, py))
+
+                target_y = level_y[key]
+                image_is_left = image_x < line_a
+                card_edge = image_x + card_w if image_is_left else image_x
+                line_edge = line_a if image_is_left else line_b
+                # Every orbital gets its own lane, so the vertical connector
+                # segments are parallel rather than drawn on top of each other.
+                lane = (
+                    line_edge - 32 - order * 15
+                    if image_is_left
+                    else line_edge + 32 + order * 15
+                )
+                draw.line(
+                    (card_edge, center_y, lane, center_y, lane, target_y, line_edge, target_y),
+                    fill="#7890ad",
+                    width=2,
+                )
+                draw.line((line_a, target_y, line_b, target_y), fill="#263b55", width=3)
+
+                line_mid = (line_a + line_b) // 2
+                draw.text(
+                    (line_mid, target_y - 9),
+                    energy_label(ref),
+                    fill="#172b45",
+                    font=label_font,
+                    anchor="ms",
+                )
+                draw.text(
+                    (line_mid, target_y + 10),
+                    ref.label,
+                    fill="#60748c",
+                    font=small_font,
+                    anchor="ma",
+                )
+                arrow_x = line_a + 24 if image_is_left else line_b - 24
                 arrows = 2 if ref.occupation > 1.5 else 1 if ref.occupation > 0.1 else 0
                 if arrows:
                     if _enum_value(ref.spin) == "beta":
-                        self._draw_arrow(draw, arrow_x, level_y - 22, level_y + 22, "#2f6fca")
+                        self._draw_arrow(draw, arrow_x, target_y - 19, target_y + 19, "#2f6fca")
                     else:
-                        self._draw_arrow(draw, arrow_x - (10 if arrows == 2 else 0), level_y + 22, level_y - 22, "#2f6fca")
+                        self._draw_arrow(draw, arrow_x, target_y + 19, target_y - 19, "#2f6fca")
                 if arrows == 2:
-                    self._draw_arrow(draw, arrow_x + 10, level_y - 22, level_y + 22, "#2f6fca")
+                    self._draw_arrow(draw, arrow_x + 10, target_y - 19, target_y + 19, "#2f6fca")
+
+        draw.text(
+            (width // 2, height - 38),
+            "能量高低顺序保持不变；纵向间距已为清晰阅读进行优化",
+            fill="#7a899b",
+            font=note_font,
+            anchor="ma",
+        )
         diagram = job.work_dir / f"{_clean_part(job.pair.label)}_MO_energy_diagram.png"
         temporary = diagram.with_name(f".{diagram.name}.{uuid.uuid4().hex}.tmp.png")
         try:
@@ -1546,6 +1826,7 @@ class OrbitalDiagramRunner:
         source: str,
         job: OrbitalDiagramJob,
         hide_window: bool,
+        show_window: bool = False,
         completion_markers: Mapping[str, Path] | None = None,
     ) -> tuple[int, str]:
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" and hide_window else 0
@@ -1584,6 +1865,8 @@ class OrbitalDiagramRunner:
             thread = threading.Thread(target=reader, daemon=True)
             thread.start()
             started = time.monotonic()
+            next_window_check = started
+            window_restored = False
             stream_finished = False
             reason = ""
             markers = tuple(
@@ -1593,6 +1876,15 @@ class OrbitalDiagramRunner:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("w", encoding="utf-8", errors="replace") as log:
                 while process.poll() is None or not stream_finished:
+                    now = time.monotonic()
+                    if (
+                        show_window
+                        and not window_restored
+                        and now >= next_window_check
+                        and now - started <= 20.0
+                    ):
+                        window_restored = self._restore_vmd_window(process.pid)
+                        next_window_check = now + 0.35
                     try:
                         item = output_queue.get(timeout=0.1)
                     except queue.Empty:
@@ -1656,6 +1948,100 @@ class OrbitalDiagramRunner:
             except OSError:
                 pass
 
+    @staticmethod
+    def _restore_vmd_window(process_id: int) -> bool:
+        """Restore and foreground the interactive VMD OpenGL window on Windows."""
+
+        if os.name != "nt":
+            return False
+        try:
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            matches: list[int] = []
+            callback_type = ctypes.WINFUNCTYPE(
+                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+            )
+            user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+            user32.EnumWindows.restype = wintypes.BOOL
+            user32.GetWindowThreadProcessId.argtypes = [
+                wintypes.HWND,
+                ctypes.POINTER(wintypes.DWORD),
+            ]
+            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+            user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+            user32.GetWindowTextLengthW.restype = ctypes.c_int
+            user32.GetWindowTextW.argtypes = [
+                wintypes.HWND,
+                wintypes.LPWSTR,
+                ctypes.c_int,
+            ]
+            user32.GetWindowTextW.restype = ctypes.c_int
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.ShowWindow.restype = wintypes.BOOL
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
+            user32.BringWindowToTop.argtypes = [wintypes.HWND]
+            user32.BringWindowToTop.restype = wintypes.BOOL
+            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            user32.SetForegroundWindow.restype = wintypes.BOOL
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+
+            @callback_type
+            def collect(hwnd, _lparam):
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                if int(owner.value) != int(process_id):
+                    return True
+                length = int(user32.GetWindowTextLengthW(hwnd))
+                if length <= 0:
+                    return True
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buffer, length + 1)
+                title = buffer.value.casefold()
+                if "opengl display" in title or (
+                    title.startswith("vmd ") and "display" in title
+                ):
+                    raw_hwnd = ctypes.cast(hwnd, ctypes.c_void_p).value
+                    if raw_hwnd is not None:
+                        matches.append(raw_hwnd)
+                return True
+
+            user32.EnumWindows(collect, 0)
+            if not matches:
+                return False
+            width, height = INTERACTIVE_VMD_WINDOW
+            restored = False
+            for raw_hwnd in matches:
+                hwnd = wintypes.HWND(raw_hwnd)
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE also clears minimized state.
+                positioned = user32.SetWindowPos(
+                    hwnd,
+                    wintypes.HWND(0),
+                    24,
+                    32,
+                    width,
+                    height,
+                    0x0040,
+                )
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                restored = restored or bool(
+                    positioned and user32.IsWindowVisible(hwnd)
+                )
+            return restored
+        except (AttributeError, OSError, TypeError, ValueError):
+            return False
+
 
 # Concise aliases for clients that prefer the generic workflow terminology.
 create_plan = create_orbital_diagram_plan
@@ -1681,12 +2067,16 @@ __all__ = [
     "STAGE_RENDER",
     "STAGE_COMPOSE",
     "STAGE_COLLECT",
+    "INTERACTIVE_VMD_VIEWPORT",
+    "INTERACTIVE_VMD_WINDOW",
+    "STAGE_PROGRESS",
     "OrbitalDiagramError",
     "OrbitalDiagramValidationError",
     "OrbitalDiagramDependencyError",
     "OrbitalDiagramSettings",
     "OrbitalDiagramJob",
     "OrbitalDiagramPlan",
+    "detect_energy_spacing_anomaly",
     "inspect_orbital_pair",
     "create_orbital_diagram_plan",
     "resume_orbital_diagram_plan",

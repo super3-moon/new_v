@@ -301,6 +301,80 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             finally:
                 page.close()
 
+    def test_stage_progress_elapsed_and_result_summary_are_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pair = orbital_data.InputPair(
+                self.gaussian_out,
+                self.gaussian_fchk,
+                orbital_data.CalculationProgram.GAUSSIAN,
+            )
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                page._active_pairs = [pair]
+                page._populate_queue([pair], ["job-1"])
+                page._run_started_monotonic = time.monotonic() - 4.0
+                page._on_worker_event(
+                    {
+                        "kind": "pair_stage",
+                        "stage": "generating_reference_cube",
+                        "status": "running",
+                        "job_id": "job-1",
+                        "wavefunction_path": str(self.gaussian_fchk),
+                        "message": "正在准备参考轨道",
+                    }
+                )
+                page._on_worker_event(
+                    {
+                        "kind": "progress",
+                        "stage": "generating_reference_cube",
+                        "status": "running",
+                        "job_id": "job-1",
+                        "wavefunction_path": str(self.gaussian_fchk),
+                        "percent": 11,
+                        "ceiling_percent": 23,
+                        "message": "正在准备参考轨道",
+                    }
+                )
+                page._tick_runtime()
+
+                self.assertGreaterEqual(page.progress.value(), 11)
+                self.assertLessEqual(page.progress.value(), 23)
+                self.assertIn("准备参考轨道", page.progress.format())
+                self.assertEqual(page.queue_table.item(0, 2).text(), "准备参考轨道")
+                self.assertEqual(page.queue_table.item(0, 3).text(), "进行中")
+                self.assertIn("正在准备参考轨道", page.queue_table.item(0, 5).text())
+                self.assertNotEqual(page.queue_table.item(0, 4).text(), "-")
+                self.assertIn("正在准备参考轨道", page.run_log.toPlainText())
+                self.assertIn("当前进度", page.run_state_label.text())
+            finally:
+                page.close()
+
+    def test_energy_anomaly_report_uses_selected_orbitals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                settings = {
+                    "orbital_selections": [
+                        {
+                            "label": "测试任务",
+                            "wavefunction_path": str(self.gaussian_fchk),
+                            "orbitals": [
+                                {"label": "HOMO-9", "energy_ev": -60.0},
+                                {"label": "HOMO-2", "energy_ev": -8.2},
+                                {"label": "HOMO-1", "energy_ev": -7.9},
+                                {"label": "HOMO", "energy_ev": -7.5},
+                            ],
+                        }
+                    ]
+                }
+                reports = page._energy_anomaly_reports(settings)
+                self.assertEqual(len(reports), 1)
+                self.assertIn("测试任务", reports[0])
+                self.assertIn("HOMO-9", reports[0])
+                self.assertIn("相差", reports[0])
+            finally:
+                page.close()
+
     def test_legacy_structured_range_loads_into_compact_selectors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
@@ -464,7 +538,11 @@ class OrbitalDiagramQtTests(unittest.TestCase):
                     None,
                 )
                 self.assertEqual(page.queue_table.item(0, 3).text(), "完成")
-                self.assertEqual(page.queue_table.item(0, 5).text(), "TARGET.png")
+                self.assertEqual(page.queue_table.item(0, 5).text(), "能级图已生成")
+                self.assertEqual(
+                    page.queue_table.item(0, 5).data(Qt.ItemDataRole.UserRole),
+                    "TARGET.png",
+                )
                 self.assertEqual(page.queue_table.rowCount(), 2)
                 self.assertEqual(page.queue_table.item(1, 3).text(), "失败")
                 self.assertIn("仍有 1 个失败任务", page.run_state_label.text())
