@@ -903,9 +903,14 @@ class OrbitalDiagramPage(QWidget):
         self.keep_cubes_check.setChecked(True)
         self.keep_cubes_check.toggled.connect(self._configuration_changed)
         output_grid.addWidget(self.keep_cubes_check, 3, 2, 1, 2)
-        output_grid.addWidget(QLabel("图标题"), 4, 0)
+        self.diagram_title_check = QCheckBox("显示图标题")
+        self.diagram_title_check.setChecked(False)
+        self.diagram_title_check.toggled.connect(self._configuration_changed)
+        output_grid.addWidget(self.diagram_title_check, 4, 0)
         self.diagram_title_edit = QLineEdit("Molecular orbital energy diagram")
+        self.diagram_title_edit.setEnabled(False)
         self.diagram_title_edit.textChanged.connect(self._configuration_changed)
+        self.diagram_title_check.toggled.connect(self.diagram_title_edit.setEnabled)
         output_grid.addWidget(self.diagram_title_edit, 4, 1, 1, 2)
         self.energy_unit_combo = QComboBox()
         self.energy_unit_combo.addItem("能量：eV", "eV")
@@ -1703,6 +1708,7 @@ class OrbitalDiagramPage(QWidget):
             "energy_decimals": 2,
             "title": self.diagram_title_edit.text().strip()
             or "Molecular orbital energy diagram",
+            "show_diagram_title": self.diagram_title_check.isChecked(),
             "output_location": str(
                 self.output_location_combo.currentData() or "result_root"
             ),
@@ -2507,6 +2513,9 @@ class OrbitalDiagramPage(QWidget):
             self.keep_cubes_check.setChecked(bool(saved.get("keep_cubes", True)))
             self.diagram_title_edit.setText(
                 str(saved.get("title") or "Molecular orbital energy diagram")
+            )
+            self.diagram_title_check.setChecked(
+                bool(saved.get("show_diagram_title", False))
             )
             energy_index = self.energy_unit_combo.findData(
                 str(saved.get("energy_unit") or "eV")

@@ -122,6 +122,7 @@ SETTING_RETRY_STAGE = {
     "energy_unit": STAGE_COMPOSE,
     "energy_decimals": STAGE_COMPOSE,
     "title": STAGE_COMPOSE,
+    "show_diagram_title": STAGE_COMPOSE,
     "output_location": STAGE_COLLECT,
     "keep_cubes": STAGE_COLLECT,
 }
@@ -350,6 +351,7 @@ class OrbitalDiagramSettings:
     energy_unit: str = "eV"
     energy_decimals: int = 2
     title: str = "Molecular orbital energy diagram"
+    show_diagram_title: bool = False
     output_location: str = "result_root"
     keep_cubes: bool = True
     strict_pair_validation: bool = True
@@ -386,6 +388,7 @@ class OrbitalDiagramSettings:
         self.energy_unit = "Hartree" if str(self.energy_unit).casefold() in {"hartree", "au", "a.u."} else "eV"
         self.energy_decimals = max(0, min(8, int(self.energy_decimals)))
         self.title = str(self.title or "Molecular orbital energy diagram").strip()
+        self.show_diagram_title = bool(self.show_diagram_title)
         if self.output_location not in {"result_root", "input_directory"}:
             raise OrbitalDiagramValidationError("未知的结果保存位置。")
         self.multiwfn_timeout_seconds = max(30, min(172800, int(self.multiwfn_timeout_seconds)))
@@ -460,6 +463,7 @@ class OrbitalDiagramJob:
     images: dict[str, str] = field(default_factory=dict)
     render_status: dict[str, str] = field(default_factory=dict)
     diagram_path: str = ""
+    diagram_svg_path: str = ""
     outputs: list[str] = field(default_factory=list)
     can_retry: list[str] = field(default_factory=list)
 
@@ -490,6 +494,7 @@ class OrbitalDiagramJob:
             "images": dict(self.images),
             "render_status": dict(self.render_status),
             "diagram_path": self.diagram_path,
+            "diagram_svg_path": self.diagram_svg_path,
             "outputs": list(self.outputs),
             "can_retry": list(self.can_retry),
         }
@@ -523,6 +528,7 @@ class OrbitalDiagramJob:
             images={str(k): str(v) for k, v in dict(raw.get("images") or {}).items()},
             render_status={str(k): str(v) for k, v in dict(raw.get("render_status") or {}).items()},
             diagram_path=str(raw.get("diagram_path") or ""),
+            diagram_svg_path=str(raw.get("diagram_svg_path") or ""),
             outputs=[str(item) for item in raw.get("outputs", []) or []],
             can_retry=[str(item) for item in raw.get("can_retry", []) or []],
         )
@@ -802,7 +808,7 @@ class OrbitalDiagramRunner:
         with self.plan.summary_path.open("w", encoding="utf-8-sig", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(
-                ["序号", "任务", "计算输出", "波函数", "状态", "失败阶段", "轨道数", "能级图", "耗时（秒）", "错误"]
+                ["序号", "任务", "计算输出", "波函数", "状态", "失败阶段", "轨道数", "PNG 能级图", "SVG 能级图", "耗时（秒）", "错误"]
             )
             for job in self.plan.jobs:
                 writer.writerow(
@@ -815,6 +821,7 @@ class OrbitalDiagramRunner:
                         job.failed_stage,
                         len(job.orbitals),
                         job.diagram_path,
+                        job.diagram_svg_path,
                         f"{job.duration_seconds:.3f}",
                         job.error,
                     ]
@@ -1010,12 +1017,15 @@ class OrbitalDiagramRunner:
             job.images = {}
             job.render_status = {}
             job.diagram_path = ""
+            job.diagram_svg_path = ""
         elif earliest <= STAGE_ORDER.index(STAGE_RENDER):
             job.images = {}
             job.render_status = {}
             job.diagram_path = ""
+            job.diagram_svg_path = ""
         elif earliest <= STAGE_ORDER.index(STAGE_COMPOSE):
             job.diagram_path = ""
+            job.diagram_svg_path = ""
         if earliest <= STAGE_ORDER.index(STAGE_REFERENCE_CUBE):
             job.reference_cube = ""
         if earliest <= STAGE_ORDER.index(STAGE_ORBITAL_CUBES):
@@ -1423,16 +1433,16 @@ class OrbitalDiagramRunner:
     @staticmethod
     def _pillow():
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image
         except ImportError as exc:
             raise OrbitalDiagramDependencyError(
-                "缺少 Pillow 图片组件：轨道 TGA 已保留，但无法转换 PNG 或合成能级图。"
+                "缺少 Pillow 图片组件：轨道 TGA 已保留，但无法转换为 PNG。"
             ) from exc
-        return Image, ImageDraw, ImageFont
+        return Image
 
     @classmethod
     def _convert_to_png(cls, source: Path, target: Path) -> None:
-        Image, _ImageDraw, _ImageFont = cls._pillow()
+        Image = cls._pillow()
         temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp.png")
         try:
             with Image.open(source) as image:
@@ -1441,295 +1451,67 @@ class OrbitalDiagramRunner:
         finally:
             temporary.unlink(missing_ok=True)
 
-    @staticmethod
-    def _font(ImageFont, size: int, *, bold: bool = False):
-        candidates = [
-            Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / ("msyhbd.ttc" if bold else "msyh.ttc"),
-            Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / ("segoeuib.ttf" if bold else "segoeui.ttf"),
-            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        ]
-        for path in candidates:
-            if path.is_file():
-                try:
-                    return ImageFont.truetype(str(path), size=size)
-                except OSError:
-                    pass
-        return ImageFont.load_default()
-
     def _compose(
         self,
         job: OrbitalDiagramJob,
         refs: Sequence[orbital_data.OrbitalRef],
-        dataset: orbital_data.OrbitalDataset,
+        _dataset: orbital_data.OrbitalDataset,
     ) -> None:
         self._set_stage(job, STAGE_COMPOSE, "正在合成分子轨道能级图")
         existing = Path(job.diagram_path) if job.diagram_path else Path()
-        if job.diagram_path and existing.is_file() and existing.stat().st_size > 64:
+        existing_svg = Path(job.diagram_svg_path) if job.diagram_svg_path else Path()
+        if (
+            job.diagram_path
+            and job.diagram_svg_path
+            and existing.is_file()
+            and existing.stat().st_size > 64
+            and existing_svg.is_file()
+            and existing_svg.stat().st_size > 64
+        ):
             return
-        Image, ImageDraw, ImageFont = self._pillow()
-        from PIL import ImageChops
+        try:
+            import orbital_diagram_renderer as renderer
+        except ImportError as exc:
+            raise OrbitalDiagramDependencyError(
+                "缺少轨道能级图绘制组件，无法生成最终图片。"
+            ) from exc
 
-        groups: dict[str, list[orbital_data.OrbitalRef]] = {}
-        for ref in refs:
-            groups.setdefault(_enum_value(ref.spin), []).append(ref)
-        unrestricted = dataset.is_unrestricted
-        width = self.plan.settings.diagram_width
-        image_w = max(270, min(350, width // 5))
-        image_h = max(
-            150,
-            min(
-                245,
-                int(image_w * self.plan.settings.height / self.plan.settings.width),
-            ),
-        )
-        card_w, card_h = image_w + 28, image_h + 28
-        row_gap = card_h + 74
-        largest = max(len(group) for group in groups.values())
-        content_top = 170
-        height = max(920, content_top + card_h + (largest - 1) * row_gap + 120)
-        canvas = Image.new("RGB", (width, height), "white")
-        draw = ImageDraw.Draw(canvas)
-        title_font = self._font(ImageFont, max(29, width // 56), bold=True)
-        header_font = self._font(ImageFont, max(22, width // 76), bold=True)
-        label_font = self._font(ImageFont, max(16, width // 100), bold=True)
-        small_font = self._font(ImageFont, max(13, width // 125))
-        note_font = self._font(ImageFont, max(12, width // 140))
-        draw.text(
-            (width // 2, 42),
-            self.plan.settings.title,
-            fill="#172b45",
-            font=title_font,
-            anchor="ma",
-        )
-        draw.line((58, 112, width - 58, 112), fill="#e2e8f0", width=2)
-
-        def energy(ref: orbital_data.OrbitalRef) -> float:
-            return (
-                ref.energy_hartree
-                if self.plan.settings.energy_unit == "Hartree"
-                else ref.energy_ev
-            )
-
-        def energy_label(ref: orbital_data.OrbitalRef) -> str:
-            suffix = "a.u." if self.plan.settings.energy_unit == "Hartree" else "eV"
-            return f"{energy(ref):.{self.plan.settings.energy_decimals}f} {suffix}"
-
-        # Build visually compressed energy clusters.  Ordering remains exact,
-        # ordinary spacings remain visible, and a single extreme value can no
-        # longer push every useful frontier level to the canvas edge.
-        clusters: list[list[orbital_data.OrbitalRef]] = []
-        for ref in sorted(refs, key=lambda item: item.energy_ev, reverse=True):
-            if clusters:
-                center = sum(item.energy_ev for item in clusters[-1]) / len(clusters[-1])
-                if abs(ref.energy_ev - center) <= 0.03:
-                    clusters[-1].append(ref)
-                    continue
-            clusters.append([ref])
-        centers = [sum(item.energy_ev for item in group) / len(group) for group in clusters]
-        gaps = [max(0.0, centers[index] - centers[index + 1]) for index in range(len(centers) - 1)]
-        positive_gaps = sorted(gap for gap in gaps if gap > 1.0e-9)
-        typical_gap = positive_gaps[len(positive_gaps) // 2] if positive_gaps else 1.0
-        intra_cluster_spacing = 70.0
-        cluster_half_spans: list[float] = []
-        for cluster in clusters:
-            counts: dict[str, int] = {}
-            for ref in cluster:
-                channel = _enum_value(ref.spin)
-                counts[channel] = counts.get(channel, 0) + 1
-            largest_channel_count = max(counts.values(), default=1)
-            cluster_half_spans.append(
-                (largest_channel_count - 1) * intra_cluster_spacing / 2.0
-            )
-        relative_positions = [0.0]
-        for gap_index, gap in enumerate(gaps):
-            extra = min(88.0, 34.0 * math.log1p(gap / max(typical_gap, 0.05)))
-            relative_positions.append(
-                relative_positions[-1]
-                + cluster_half_spans[gap_index]
-                + 78.0
-                + extra
-                + cluster_half_spans[gap_index + 1]
-            )
-        raw_span = (
-            (relative_positions[-1] if relative_positions else 0.0)
-            + (cluster_half_spans[0] if cluster_half_spans else 0.0)
-            + (cluster_half_spans[-1] if cluster_half_spans else 0.0)
-        )
-        level_start = (
-            (height - raw_span) / 2.0
-            + (cluster_half_spans[0] if cluster_half_spans else 0.0)
-            + 12.0
-        )
-        level_y: dict[str, int] = {}
-        for cluster_index, cluster in enumerate(clusters):
-            base_y = level_start + relative_positions[cluster_index]
-            by_channel: dict[str, list[orbital_data.OrbitalRef]] = {}
-            for ref in cluster:
-                by_channel.setdefault(_enum_value(ref.spin), []).append(ref)
-            for channel_items in by_channel.values():
-                ordered = sorted(channel_items, key=lambda item: item.energy_ev, reverse=True)
-                for index, ref in enumerate(ordered):
-                    offset = (
-                        index - (len(ordered) - 1) / 2.0
-                    ) * intra_cluster_spacing
-                    level_y[_orbital_key(ref)] = int(round(base_y + offset))
-
-        if unrestricted:
-            center_x = width // 2
-            layout = {
-                "alpha": (48, center_x - 255, center_x - 76, "α MOs", "#426b9c"),
-                "beta": (width - card_w - 48, center_x + 76, center_x + 255, "β MOs", "#66558f"),
-            }
-            panel_left, panel_right = center_x - 310, center_x + 310
-        else:
-            channel = next(iter(groups))
-            layout = {
-                channel: (64, width // 2 - 110, width // 2 + 110, "MOs", "#426b9c")
-            }
-            panel_left, panel_right = width // 2 - 175, width // 2 + 175
-        panel_top = max(134, min(level_y.values()) - 70)
-        panel_bottom = min(height - 74, max(level_y.values()) + 72)
-        draw.rounded_rectangle(
-            (panel_left, panel_top, panel_right, panel_bottom),
-            radius=22,
-            fill="#f8fafc",
-            outline="#dbe5ef",
-            width=2,
-        )
-
-        # All orbitals use one shared crop rectangle, preserving the user's
-        # captured orientation, scale and relative molecular placement.
-        source_images: dict[str, object] = {}
-        crop_box: tuple[int, int, int, int] | None = None
+        energy_unit = self.plan.settings.energy_unit
+        values = []
         for ref in refs:
             key = _orbital_key(ref)
-            with Image.open(job.images[key]) as opened:
-                source = opened.convert("RGB")
-            source_images[key] = source
-            white = Image.new("RGB", source.size, "white")
-            mask = ImageChops.difference(source, white).convert("L").point(
-                lambda value: 255 if value > 10 else 0
+            values.append(
+                {
+                    "key": key,
+                    "spin": _enum_value(ref.spin),
+                    "label": ref.label,
+                    "energy": (
+                        ref.energy_hartree
+                        if energy_unit == "Hartree"
+                        else ref.energy_ev
+                    ),
+                    "occupation": ref.occupation,
+                    "image_path": job.images.get(key, ""),
+                }
             )
-            bounds = mask.getbbox()
-            if bounds:
-                crop_box = (
-                    bounds
-                    if crop_box is None
-                    else (
-                        min(crop_box[0], bounds[0]),
-                        min(crop_box[1], bounds[1]),
-                        max(crop_box[2], bounds[2]),
-                        max(crop_box[3], bounds[3]),
-                    )
-                )
-        if crop_box is not None:
-            source_width, source_height = next(iter(source_images.values())).size
-            padding = max(10, int(min(source_width, source_height) * 0.025))
-            crop_box = (
-                max(0, crop_box[0] - padding),
-                max(0, crop_box[1] - padding),
-                min(source_width, crop_box[2] + padding),
-                min(source_height, crop_box[3] + padding),
-            )
-
-        for channel, items in groups.items():
-            image_x, line_a, line_b, header, accent = layout[channel]
-            draw.text(
-                ((line_a + line_b) // 2, 136),
-                header,
-                fill=accent,
-                font=header_font,
-                anchor="ma",
-            )
-            ordered = sorted(items, key=lambda item: item.energy_ev, reverse=True)
-            group_offset = (largest - len(ordered)) * row_gap / 2.0
-            first_center = content_top + card_h / 2.0 + group_offset
-            for order, ref in enumerate(ordered):
-                key = _orbital_key(ref)
-                center_y = int(round(first_center + order * row_gap))
-                card_y = center_y - card_h // 2
-                draw.rounded_rectangle(
-                    (image_x, card_y, image_x + card_w, card_y + card_h),
-                    radius=18,
-                    fill="#fbfcfe",
-                    outline="#d8e2ed",
-                    width=2,
-                )
-                picture = source_images[key]
-                if crop_box is not None:
-                    picture = picture.crop(crop_box)
-                picture.thumbnail((image_w, image_h), Image.Resampling.LANCZOS)
-                px = image_x + (card_w - picture.width) // 2
-                py = center_y - picture.height // 2
-                canvas.paste(picture, (px, py))
-
-                target_y = level_y[key]
-                image_is_left = image_x < line_a
-                card_edge = image_x + card_w if image_is_left else image_x
-                line_edge = line_a if image_is_left else line_b
-                # Every orbital gets its own lane, so the vertical connector
-                # segments are parallel rather than drawn on top of each other.
-                lane = (
-                    line_edge - 32 - order * 15
-                    if image_is_left
-                    else line_edge + 32 + order * 15
-                )
-                draw.line(
-                    (card_edge, center_y, lane, center_y, lane, target_y, line_edge, target_y),
-                    fill="#7890ad",
-                    width=2,
-                )
-                draw.line((line_a, target_y, line_b, target_y), fill="#263b55", width=3)
-
-                line_mid = (line_a + line_b) // 2
-                draw.text(
-                    (line_mid, target_y - 9),
-                    energy_label(ref),
-                    fill="#172b45",
-                    font=label_font,
-                    anchor="ms",
-                )
-                draw.text(
-                    (line_mid, target_y + 10),
-                    ref.label,
-                    fill="#60748c",
-                    font=small_font,
-                    anchor="ma",
-                )
-                arrow_x = line_a + 24 if image_is_left else line_b - 24
-                arrows = 2 if ref.occupation > 1.5 else 1 if ref.occupation > 0.1 else 0
-                if arrows:
-                    if _enum_value(ref.spin) == "beta":
-                        self._draw_arrow(draw, arrow_x, target_y - 19, target_y + 19, "#2f6fca")
-                    else:
-                        self._draw_arrow(draw, arrow_x, target_y + 19, target_y - 19, "#2f6fca")
-                if arrows == 2:
-                    self._draw_arrow(draw, arrow_x + 10, target_y - 19, target_y + 19, "#2f6fca")
-
-        draw.text(
-            (width // 2, height - 38),
-            "能量高低顺序保持不变；纵向间距已为清晰阅读进行优化",
-            fill="#7a899b",
-            font=note_font,
-            anchor="ma",
-        )
-        diagram = job.work_dir / f"{_clean_part(job.pair.label)}_MO_energy_diagram.png"
-        temporary = diagram.with_name(f".{diagram.name}.{uuid.uuid4().hex}.tmp.png")
+        stem = f"{_clean_part(job.pair.label)}_MO_energy_diagram"
+        diagram = job.work_dir / f"{stem}.png"
+        diagram_svg = job.work_dir / f"{stem}.svg"
         try:
-            canvas.save(temporary, "PNG", optimize=True)
-            os.replace(temporary, diagram)
-        finally:
-            temporary.unlink(missing_ok=True)
-        job.diagram_path = str(diagram.resolve())
-
-    @staticmethod
-    def _draw_arrow(draw, x: int, start_y: int, end_y: int, color: str) -> None:
-        draw.line((x, start_y, x, end_y), fill=color, width=3)
-        direction = -1 if end_y < start_y else 1
-        draw.polygon(
-            [(x, end_y), (x - 6, end_y - direction * 10), (x + 6, end_y - direction * 10)],
-            fill=color,
-        )
+            result = renderer.render_orbital_energy_diagram(
+                values,
+                diagram,
+                diagram_svg,
+                output_width=self.plan.settings.diagram_width,
+                energy_unit=energy_unit,
+                energy_decimals=self.plan.settings.energy_decimals,
+                title=self.plan.settings.title,
+                show_title=self.plan.settings.show_diagram_title,
+            )
+        except renderer.OrbitalDiagramRenderError as exc:
+            raise OrbitalDiagramError(str(exc)) from exc
+        job.diagram_path = str(result.png_path)
+        job.diagram_svg_path = str(result.svg_path)
 
     def _collect(self, job: OrbitalDiagramJob) -> None:
         self._set_stage(job, STAGE_COLLECT, "正在整理能级图、轨道数据、图片与日志")
@@ -1739,6 +1521,14 @@ class OrbitalDiagramRunner:
         shutil.copy2(job.diagram_path, diagram_target)
         job.diagram_path = str(diagram_target.resolve())
         job.outputs.append(job.diagram_path)
+        diagram_svg_source = Path(job.diagram_svg_path) if job.diagram_svg_path else Path()
+        if job.diagram_svg_path and diagram_svg_source.is_file():
+            diagram_svg_target = _unique_target(
+                job.result_dir / f"{label}_MO_energy_diagram.svg"
+            )
+            shutil.copy2(diagram_svg_source, diagram_svg_target)
+            job.diagram_svg_path = str(diagram_svg_target.resolve())
+            job.outputs.append(job.diagram_svg_path)
         image_dir = job.result_dir / f"{label}_orbitals"
         image_dir.mkdir(parents=True, exist_ok=True)
         collected_images: dict[str, str] = {}
