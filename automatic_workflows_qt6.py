@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -11,7 +12,7 @@ import automatic_workflows as automation
 import vmd_style_tool as core
 from orbital_diagram_qt6 import OrbitalDiagramPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
-from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QDoubleValidator, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -583,6 +584,12 @@ class AutomaticWorkflowsPage(QWidget):
         self._cancel_requested = False
         self._trial_input = ""
         self._trial_signature = ""
+        self._run_started_monotonic = 0.0
+        self._row_started_monotonic: dict[int, float] = {}
+        self._last_job_progress_message: dict[int, str] = {}
+        self._runtime_timer = QTimer(self)
+        self._runtime_timer.setInterval(1000)
+        self._runtime_timer.timeout.connect(self._tick_runtime)
         self._build_ui()
         self._select_default_style()
 
@@ -626,7 +633,7 @@ class AutomaticWorkflowsPage(QWidget):
         text.setSpacing(3)
         title = QLabel("全自动流程")
         title.setObjectName("batchHeroTitle")
-        subtitle = QLabel("选择一个完整流程，由软件依次接管计算、校验、绘图与结果整理")
+        subtitle = QLabel("提供你的波函数与输出文件，全自动绘制")
         subtitle.setObjectName("batchHeroSubtitle")
         subtitle.setWordWrap(True)
         text.addWidget(title)
@@ -859,8 +866,8 @@ class AutomaticWorkflowsPage(QWidget):
 
         settings_grid.addWidget(QLabel("运行方式"), 0, 2)
         self.render_mode_combo = QComboBox()
-        self.render_mode_combo.addItem("自动渲染图片并关闭 VMD", "automatic")
-        self.render_mode_combo.addItem("生成场景后在 VMD 中查看", "interactive")
+        self.render_mode_combo.addItem("在 VMD 中调整后自动渲染", "automatic")
+        self.render_mode_combo.addItem("在 VMD 中调整并保存场景，不渲染", "interactive")
         self.render_mode_combo.addItem("仅生成 Cube，不启动 VMD", "cubes_only")
         self.render_mode_combo.currentIndexChanged.connect(self._on_render_mode_changed)
         settings_grid.addWidget(self.render_mode_combo, 0, 3)
@@ -1287,7 +1294,14 @@ class AutomaticWorkflowsPage(QWidget):
         drawing_summary = (
             "仅生成表面数据，不生成图片"
             if render_mode == "cubes_only"
-            else f"使用“{style_name}”生成图片 · {width} × {height}"
+            else (
+                f"使用“{style_name}”打开 VMD 自由调整，"
+                + (
+                    f"确认后自动渲染 · 最大 {width} × {height}"
+                    if render_mode == "automatic"
+                    else "确认后保存场景"
+                )
+            )
         )
         self.workflow_summary_label.setText(
             f"{count} 个文件 · 计算表面数据 → 检查结果 → "
@@ -1429,8 +1443,13 @@ class AutomaticWorkflowsPage(QWidget):
                     self.queue_table.setItem(row, 5, QTableWidgetItem("已通过，不会重复计算"))
                     break
         self.run_log.clear()
-        self.progress.setRange(0, len(display_files))
+        self.progress.setRange(0, 1000)
         self.progress.setValue(0)
+        self.progress.setFormat("0% · 正在启动")
+        self._run_started_monotonic = time.monotonic()
+        self._row_started_monotonic.clear()
+        self._last_job_progress_message.clear()
+        self._runtime_timer.start()
         self._set_run_state("准备试运行" if trial else "准备运行", "running")
         self.run_summary_label.setText("正在建立完整自动化任务……")
         self.continue_button.hide()
@@ -1482,6 +1501,21 @@ class AutomaticWorkflowsPage(QWidget):
             return index
         return -1
 
+    def _tick_runtime(self) -> None:
+        now = time.monotonic()
+        for row in range(self.queue_table.rowCount()):
+            status_item = self.queue_table.item(row, 3)
+            if status_item is None or status_item.text() != "进行中":
+                continue
+            started = self._row_started_monotonic.setdefault(
+                row, self._run_started_monotonic or now
+            )
+            self.queue_table.setItem(
+                row,
+                4,
+                QTableWidgetItem(f"{max(0.0, now - started):.0f} 秒"),
+            )
+
     @Slot(object)
     def _on_worker_event(self, event: object) -> None:
         if not isinstance(event, dict):
@@ -1497,11 +1531,57 @@ class AutomaticWorkflowsPage(QWidget):
             # Full console output remains available in each task's log file.
             # Verbatim output here obscures the progress messages users need.
             return
+        if kind == "job_progress":
+            row = self._row_for_event(event)
+            overall = max(0.0, min(100.0, float(event.get("percent") or 0.0)))
+            self.progress.setRange(0, 1000)
+            self.progress.setValue(round(overall * 10.0))
+            stage_text = _stage_label(event.get("stage"), "处理中")
+            self.progress.setFormat(f"{overall:.0f}% · {stage_text}")
+            elapsed = float(event.get("elapsed_seconds") or 0.0)
+            message = str(event.get("message") or stage_text)
+            if row >= 0:
+                self._row_started_monotonic.setdefault(
+                    row, time.monotonic() - max(0.0, elapsed)
+                )
+                self.queue_table.setItem(row, 2, QTableWidgetItem(stage_text))
+                self.queue_table.setItem(row, 3, QTableWidgetItem("进行中"))
+                self.queue_table.setItem(
+                    row, 4, QTableWidgetItem(f"{elapsed:.0f} 秒")
+                )
+                self.queue_table.setItem(row, 5, QTableWidgetItem(message))
+                if self._last_job_progress_message.get(row) != message:
+                    self._append_log(message)
+                    self._last_job_progress_message[row] = message
+            total_elapsed = max(
+                0.0, time.monotonic() - self._run_started_monotonic
+            )
+            self.run_summary_label.setText(
+                f"总体进度 {overall:.0f}% · 已运行 {total_elapsed:.0f} 秒\n{message}"
+            )
+            return
         if kind == "progress":
             current = int(event.get("current") or event.get("completed") or 0)
             total = int(event.get("total") or len(self._run_files) or 1)
-            self.progress.setRange(0, max(1, total))
-            self.progress.setValue(max(0, min(current, total)))
+            percent = max(0.0, min(100.0, current / max(1, total) * 100.0))
+            self.progress.setRange(0, 1000)
+            self.progress.setValue(round(percent * 10.0))
+            self.progress.setFormat(f"{percent:.0f}% · 已完成 {current}/{total}")
+            return
+        if kind == "vmd_interaction_required":
+            row = self._row_for_event(event)
+            message = str(
+                event.get("message")
+                or "VMD 已打开，请调整后在浮动窗口中确认。"
+            )
+            if row >= 0:
+                self.queue_table.setItem(row, 2, QTableWidgetItem("调整 VMD 视图"))
+                self.queue_table.setItem(row, 5, QTableWidgetItem(message))
+            self._set_run_state("等待 VMD 确认", "running")
+            self._append_log(message)
+            return
+        if kind == "cleanup_warning":
+            self._append_log(str(event.get("message") or "部分过程文件未能清理。"))
             return
         if kind == "job_stage":
             row = self._row_for_event(event)
@@ -1513,15 +1593,19 @@ class AutomaticWorkflowsPage(QWidget):
             self.queue_table.setItem(row, 2, QTableWidgetItem(stage_text))
             self.queue_table.setItem(row, 3, QTableWidgetItem(status_text))
             raw_message = str(event.get("message") or event.get("output") or "")
+            known_stage = str(event.get("stage") or "").casefold() in _STAGE_LABELS
+            known_status = raw_status in _STATUS_LABELS
             if raw_status in {"failed", "timeout", "cancelled"}:
-                message = raw_message or status_text
+                message = raw_message if known_stage and known_status else status_text
             elif raw_status in {"success", "completed", "done", "ok"}:
                 message = f"{stage_text}完成"
             else:
-                message = stage_text
+                message = raw_message if known_stage and known_status else stage_text
             if message:
                 self.queue_table.setItem(row, 5, QTableWidgetItem(message))
                 self._append_log(message)
+            if raw_status == "running":
+                self._row_started_monotonic.setdefault(row, time.monotonic())
             elapsed = event.get("elapsed_seconds")
             if elapsed is not None:
                 self.queue_table.setItem(row, 4, QTableWidgetItem(f"{float(elapsed):.1f} 秒"))
@@ -1534,6 +1618,7 @@ class AutomaticWorkflowsPage(QWidget):
 
     @Slot(object, object)
     def _on_worker_finished(self, result: object, error: object) -> None:
+        self._runtime_timer.stop()
         self.cancel_button.setEnabled(False)
         self.trial_button.setEnabled(True)
         self.start_button.setEnabled(True)
@@ -1563,7 +1648,13 @@ class AutomaticWorkflowsPage(QWidget):
             self._set_run_state("部分完成", "warning")
         else:
             self._set_run_state("运行失败", "failed")
-        self.progress.setValue(min(total, success + failed + cancelled))
+        completed_count = min(total, success + failed + cancelled)
+        final_percent = completed_count / max(1, total) * 100.0
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(round(final_percent * 10.0))
+        self.progress.setFormat(
+            f"{final_percent:.0f}% · 已完成 {completed_count}/{total}"
+        )
         self.run_summary_label.setText(
             f"共 {total} 个任务：成功 {success}，失败 {failed}，取消 {cancelled}。"
             + (f"\n结果目录：{self.last_run_dir}" if self.last_run_dir else "")
@@ -1727,6 +1818,10 @@ class AutomaticWorkflowsPage(QWidget):
             return
         self._run_mode = "retry"
         self._cancel_requested = False
+        self._run_started_monotonic = time.monotonic()
+        self._row_started_monotonic.clear()
+        self._last_job_progress_message.clear()
+        self._runtime_timer.start()
         self.cancel_button.setEnabled(True)
         self.trial_button.setEnabled(False)
         self.start_button.setEnabled(False)
@@ -1749,6 +1844,7 @@ class AutomaticWorkflowsPage(QWidget):
 
     @Slot(object, object)
     def _on_retry_finished(self, result: object, error: object) -> None:
+        self._runtime_timer.stop()
         self.cancel_button.setEnabled(False)
         self.trial_button.setEnabled(True)
         self.start_button.setEnabled(True)
@@ -1819,6 +1915,7 @@ class AutomaticWorkflowsPage(QWidget):
             self.orbital_page.cancel()
 
     def _cleanup_thread(self) -> None:
+        self._runtime_timer.stop()
         if self.worker is not None:
             self.worker.deleteLater()
         if self.thread is not None:

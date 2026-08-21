@@ -17,8 +17,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
+import orbital_vmd
 import vmd_style_tool as vmd_core
 
 
@@ -48,7 +49,19 @@ SUPPORTED_WAVEFUNCTION_EXTENSIONS = (
     ".molden.input",
 )
 
-ESP_STDIN_SEQUENCE = "5\n1\n3\n2\n0\n5\n12\n1\n2\n0\nq\n"
+# Both volumetric files must use exactly the same origin, dimensions and grid
+# vectors.  Density is generated first on the normal ESP plotting grid, then
+# Multiwfn mode 8 reuses density.cub's grid for the ESP calculation.
+ESP_STDIN_SEQUENCE = "5\n1\n1\n2\n0\n5\n12\n8\ndensity.cub\n2\n0\nq\n"
+
+AUTOMATION_STAGE_PROGRESS = {
+    STAGE_MULTIWFN: (1.0, 74.0),
+    STAGE_CUBE_VALIDATION: (74.0, 78.0),
+    STAGE_VMD_RENDER: (78.0, 96.0),
+    STAGE_COLLECT: (96.0, 99.0),
+}
+INTERACTIVE_VMD_VIEWPORT = (1160, 640)
+INTERACTIVE_VMD_WINDOW = (1180, 700)
 
 
 class AutomationValidationError(ValueError):
@@ -229,6 +242,8 @@ class AutomationJob:
     density_cube: str = ""
     esp_cube: str = ""
     image_path: str = ""
+    viewpoint_path: str = ""
+    vmd_save_state_path: str = ""
     outputs: list[str] = field(default_factory=list)
     can_retry_drawing: bool = False
 
@@ -254,6 +269,8 @@ class AutomationJob:
             density_cube=str(raw.get("density_cube") or ""),
             esp_cube=str(raw.get("esp_cube") or ""),
             image_path=str(raw.get("image_path") or ""),
+            viewpoint_path=str(raw.get("viewpoint_path") or ""),
+            vmd_save_state_path=str(raw.get("vmd_save_state_path") or ""),
             outputs=[str(item) for item in raw.get("outputs") or []],
             can_retry_drawing=bool(raw.get("can_retry_drawing", False)),
         )
@@ -279,6 +296,8 @@ class AutomationJob:
             "density_cube": self.density_cube,
             "esp_cube": self.esp_cube,
             "image_path": self.image_path,
+            "viewpoint_path": self.viewpoint_path,
+            "vmd_save_state_path": self.vmd_save_state_path,
             "outputs": list(self.outputs),
             "can_retry_drawing": self.can_retry_drawing,
         }
@@ -520,6 +539,9 @@ class AutomaticWorkflowRunner:
         self._cancel_event = threading.Event()
         self._process_lock = threading.Lock()
         self._active_process: subprocess.Popen[str] | None = None
+        self._active_job_position = 0
+        self._active_job_total = max(1, len(plan.jobs))
+        self._job_started_monotonic: dict[int, float] = {}
 
     def _emit(self, kind: str, **payload: object) -> None:
         if self.event_callback is not None:
@@ -587,6 +609,8 @@ class AutomaticWorkflowRunner:
         self.plan.results_dir.mkdir(parents=True, exist_ok=True)
         (self.plan.run_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.plan.status = STATUS_RUNNING
+        self._active_job_position = 0
+        self._active_job_total = max(1, len(self.plan.jobs))
         self._write_manifest()
         self._emit(
             "run_started",
@@ -599,6 +623,7 @@ class AutomaticWorkflowRunner:
         for job in self.plan.jobs:
             if self.plan.resume and job.status == STATUS_SUCCESS:
                 completed += 1
+                self._active_job_position = completed
                 self._emit(
                     "progress",
                     current=completed,
@@ -612,8 +637,10 @@ class AutomaticWorkflowRunner:
                 job.error = "自动化流程已由用户停止。"
                 self._emit_job(job, message=job.error)
             else:
+                self._active_job_position = completed
                 self._run_job(job)
             completed += 1
+            self._active_job_position = completed
             self._write_manifest()
             self._emit(
                 "progress",
@@ -664,9 +691,33 @@ class AutomaticWorkflowRunner:
         job.stage = stage
         job.status = STATUS_RUNNING
         self._emit_job(job, message=message)
+        start, _ceiling = AUTOMATION_STAGE_PROGRESS.get(stage, (0.0, 0.0))
+        self._emit_job_progress(job, start, message)
+
+    def _emit_job_progress(
+        self, job: AutomationJob, task_percent: float, message: str
+    ) -> None:
+        local = max(0.0, min(100.0, float(task_percent)))
+        overall = (
+            self._active_job_position + local / 100.0
+        ) / max(1, self._active_job_total) * 100.0
+        started = self._job_started_monotonic.get(job.index)
+        elapsed = max(0.0, time.monotonic() - started) if started else 0.0
+        self._emit(
+            "job_progress",
+            index=job.index,
+            input_file=str(job.input_path),
+            stage=job.stage,
+            status=job.status,
+            task_percent=round(local, 2),
+            percent=round(overall, 2),
+            elapsed_seconds=round(elapsed, 1),
+            message=message,
+        )
 
     def _run_job(self, job: AutomationJob) -> None:
         started = time.monotonic()
+        self._job_started_monotonic[job.index] = started
         job.started_at = datetime.now().isoformat(timespec="seconds")
         job.work_dir.mkdir(parents=True, exist_ok=False)
         try:
@@ -794,12 +845,14 @@ class AutomaticWorkflowRunner:
             raise RuntimeError("Multiwfn 已结束，但没有生成 ESP Cube（totesp.cub）。")
         if density.stat().st_size <= 0 or potential.stat().st_size <= 0:
             raise RuntimeError("生成的 Cube 文件为空。")
+        # Record both files before validation so a failure still preserves the
+        # exact artifacts needed for diagnosis or a drawing-only retry.
+        job.density_cube = str(density.resolve())
+        job.esp_cube = str(potential.resolve())
         vmd_core.cube_grid_signature(density)
         vmd_core.cube_grid_signature(potential)
         if not vmd_core.cube_grids_compatible(density, potential):
             raise RuntimeError("电子密度与 ESP Cube 的空间网格不兼容，已停止绘图。")
-        job.density_cube = str(density.resolve())
-        job.esp_cube = str(potential.resolve())
 
     def _style_parts(self) -> tuple[dict, list[str]]:
         snapshot = self.plan.settings["style_snapshot"]
@@ -817,26 +870,114 @@ class AutomaticWorkflowRunner:
         )
         return env
 
-    def _render_automatic(self, job: AutomationJob) -> None:
-        self._set_stage(job, STAGE_VMD_RENDER, "正在使用 VMD 自动渲染")
+    def _capture_vmd_view(self, job: AutomationJob) -> orbital_vmd.VmdViewState:
+        self._set_stage(
+            job,
+            STAGE_VMD_RENDER,
+            "请在 VMD 中调整角度与显示效果，完成后点击“保存全部参数并确认”",
+        )
         style, rep0_commands = self._style_parts()
-        script = build_automatic_vmd_tcl(
+        protocol = job.work_dir / "esp_view.capture"
+        cancel_marker = orbital_vmd.capture_cancel_marker_path(protocol)
+        error_log = orbital_vmd.capture_error_log_path(protocol)
+        native_state = job.work_dir / "esp_final_state.vmd"
+        for path in (protocol, cancel_marker, error_log, native_state):
+            path.unlink(missing_ok=True)
+        initial_scene = build_interactive_vmd_tcl(style, rep0_commands)
+        capture_script = orbital_vmd.build_interactive_capture_tcl(
+            job.density_cube,
+            protocol,
             style,
-            rep0_commands,
+            rep0_commands=rep0_commands,
+            width=INTERACTIVE_VMD_VIEWPORT[0],
+            height=INTERACTIVE_VMD_VIEWPORT[1],
+            debug_state_path=native_state,
+            initial_scene_tcl=initial_scene,
+        )
+        script_path = job.work_dir / "adjust_esp_view.vmd"
+        _write_text_atomic(script_path, capture_script)
+        self._emit(
+            "vmd_interaction_required",
+            index=job.index,
+            input_file=str(job.input_path),
+            message="VMD 已打开，可自由调整；确认后将自动使用 Tachyon 渲染。",
+        )
+        return_code, reason = self._run_process(
+            [str(self.vmd_exe), "-e", str(script_path)],
+            cwd=job.work_dir,
+            env=self._vmd_environment(job),
+            stdin_text=None,
+            timeout_seconds=int(self.plan.settings["vmd_timeout_seconds"]),
+            log_path=job.work_dir / "vmd_viewpoint.log",
+            source="VMD",
+            index=job.index,
+            hide_window=False,
+            show_window=True,
+            completion_markers={
+                "viewpoint_confirmed": protocol,
+                "viewpoint_cancelled": cancel_marker,
+            },
+        )
+        job.vmd_return_code = return_code
+        if reason != "cancelled":
+            if cancel_marker.is_file() and not protocol.is_file():
+                reason = "viewpoint_cancelled"
+            elif protocol.is_file():
+                reason = "viewpoint_confirmed"
+        if reason in {"cancelled", "viewpoint_cancelled"}:
+            job.vmd_status = STATUS_CANCELLED
+            raise _CancelledError
+        if reason == "timeout":
+            job.vmd_status = STATUS_TIMEOUT
+            raise _TimeoutError("等待 VMD 调整确认超时，Cube 已保留。")
+        if return_code != 0 and reason != "viewpoint_confirmed":
+            job.vmd_status = STATUS_FAILED
+            detail = f"；诊断记录：{error_log}" if error_log.is_file() else ""
+            raise RuntimeError(f"VMD 调整阶段未正常结束（退出码 {return_code}）{detail}。")
+        if not protocol.is_file():
+            job.vmd_status = STATUS_FAILED
+            raise RuntimeError("没有确认 VMD 显示参数，Cube 已保留。")
+        state = orbital_vmd.load_view_state(
+            protocol,
+            expected_geometry_fingerprint=orbital_vmd.cube_geometry_fingerprint(
+                job.density_cube
+            ),
+        )
+        normalized = job.work_dir / "esp_viewpoint.json"
+        state.save_json(normalized)
+        job.viewpoint_path = str(normalized.resolve())
+        if native_state.is_file():
+            job.vmd_save_state_path = str(native_state.resolve())
+        self._emit_job_progress(job, 88.0, "VMD 参数已确认，正在准备 Tachyon 渲染")
+        return state
+
+    def _render_automatic(self, job: AutomationJob) -> None:
+        state = self._capture_vmd_view(job)
+        self._emit_job_progress(job, 89.0, "正在使用 Tachyon 渲染最终图片")
+        script_path = job.work_dir / "automatic_render.vmd"
+        native_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.tga"
+        native_output = job.work_dir / native_name
+        render_script = orbital_vmd.build_batch_render_tcl(
+            job.density_cube,
+            native_output,
+            state,
             width=int(self.plan.settings["width"]),
             height=int(self.plan.settings["height"]),
+            renderer="TachyonInternal",
+            native_state_path=(
+                job.vmd_save_state_path if job.vmd_save_state_path else None
+            ),
+            reference_cube_path=(
+                job.density_cube if job.vmd_save_state_path else None
+            ),
         )
-        script_path = job.work_dir / "automatic_render.vmd"
-        _write_text_atomic(script_path, script)
-        native_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.tga"
-        env = self._vmd_environment(job)
-        env["RENDER_FILE"] = native_name
+        _write_text_atomic(script_path, render_script)
         marker = time.time_ns()
         command = [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(script_path)]
         return_code, reason = self._run_process(
             command,
             cwd=job.work_dir,
-            env=env,
+            env=self._vmd_environment(job),
             stdin_text=None,
             timeout_seconds=int(self.plan.settings["vmd_timeout_seconds"]),
             log_path=job.work_dir / "vmd.log",
@@ -871,36 +1012,10 @@ class AutomaticWorkflowRunner:
             raise RuntimeError("VMD 图片转换为 PNG 后校验失败；原始渲染文件已保留。")
         job.image_path = str(png.resolve())
         job.vmd_status = STATUS_SUCCESS
+        self._emit_job_progress(job, 96.0, "Tachyon 图片已生成")
 
     def _open_interactive_vmd(self, job: AutomationJob) -> None:
-        self._set_stage(job, STAGE_VMD_RENDER, "VMD 已打开，请检查后关闭窗口以继续")
-        style, rep0_commands = self._style_parts()
-        script_path = job.work_dir / "interactive_scene.vmd"
-        _write_text_atomic(
-            script_path,
-            build_interactive_vmd_tcl(style, rep0_commands),
-        )
-        return_code, reason = self._run_process(
-            [str(self.vmd_exe), "-e", str(script_path)],
-            cwd=job.work_dir,
-            env=self._vmd_environment(job),
-            stdin_text=None,
-            timeout_seconds=int(self.plan.settings["vmd_timeout_seconds"]),
-            log_path=job.work_dir / "vmd.log",
-            source="VMD",
-            index=job.index,
-            hide_window=False,
-        )
-        job.vmd_return_code = return_code
-        if reason == "cancelled":
-            job.vmd_status = STATUS_CANCELLED
-            raise _CancelledError
-        if reason == "timeout":
-            job.vmd_status = STATUS_TIMEOUT
-            raise _TimeoutError("等待 VMD 关闭超时，已停止当前 VMD。")
-        if return_code != 0:
-            job.vmd_status = STATUS_FAILED
-            raise RuntimeError(f"VMD 未正常关闭（退出码 {return_code}）。")
+        self._capture_vmd_view(job)
         job.vmd_status = STATUS_SUCCESS
 
     @staticmethod
@@ -997,6 +1112,7 @@ class AutomaticWorkflowRunner:
         for source, label in (
             (job.work_dir / "multiwfn.log", "Multiwfn"),
             (job.work_dir / "vmd.log", "VMD"),
+            (job.work_dir / "vmd_viewpoint.log", "VMD_adjustment"),
         ):
             if source.is_file():
                 copied = self._copy_unique(source, logs_dir / f"{stem}_{label}.log")
@@ -1019,11 +1135,20 @@ class AutomaticWorkflowRunner:
             )
             job.image_path = str(image)
             job.outputs.append(str(image))
-        elif self.plan.settings["render_mode"] == "interactive":
-            scene = job.work_dir / "interactive_scene.vmd"
-            if scene.is_file():
-                copied = self._copy_unique(scene, job.result_dir / f"{stem}_ESP_scene.vmd")
-                job.outputs.append(str(copied))
+        viewpoint = Path(job.viewpoint_path) if job.viewpoint_path else Path()
+        if job.viewpoint_path and viewpoint.is_file():
+            copied = self._copy_unique(
+                viewpoint, job.result_dir / f"{stem}_ESP_viewpoint.json"
+            )
+            job.outputs.append(str(copied))
+        native_state = (
+            Path(job.vmd_save_state_path) if job.vmd_save_state_path else Path()
+        )
+        if job.vmd_save_state_path and native_state.is_file():
+            copied = self._copy_unique(
+                native_state, job.result_dir / f"{stem}_ESP_final_state.vmd"
+            )
+            job.outputs.append(str(copied))
 
         if not self.plan.settings["keep_cubes"]:
             Path(job.density_cube).unlink(missing_ok=True)
@@ -1036,7 +1161,11 @@ class AutomaticWorkflowRunner:
             Path(job.esp_cube) if job.esp_cube else None,
             job.work_dir / "multiwfn.log",
             job.work_dir / "vmd.log",
+            job.work_dir / "vmd_viewpoint.log",
             job.work_dir / "automatic_render.vmd",
+            job.work_dir / "adjust_esp_view.vmd",
+            Path(job.viewpoint_path) if job.viewpoint_path else None,
+            Path(job.vmd_save_state_path) if job.vmd_save_state_path else None,
         ):
             if source is not None and source.is_file():
                 copied = self._copy_unique(source, recovery / source.name)
@@ -1055,6 +1184,8 @@ class AutomaticWorkflowRunner:
         source: str,
         index: int,
         hide_window: bool,
+        show_window: bool = False,
+        completion_markers: Mapping[str, Path] | None = None,
     ) -> tuple[int, str]:
         creation_flags = (
             subprocess.CREATE_NO_WINDOW
@@ -1062,6 +1193,9 @@ class AutomaticWorkflowRunner:
             else 0
         )
         encoding = locale.getpreferredencoding(False) or "utf-8"
+        existing_vmd_windows = (
+            orbital_vmd.vmd_display_window_handles() if show_window else set()
+        )
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
@@ -1096,10 +1230,33 @@ class AutomaticWorkflowRunner:
             reader = threading.Thread(target=read_output, daemon=True)
             reader.start()
             started = time.monotonic()
+            next_window_check = started
+            next_heartbeat = started
             stream_finished = False
             reason = ""
+            last_process_percent = 0.0
+            last_raw_percent = -1.0
+            progress_pass = 0
+            markers = tuple(
+                (str(marker_reason), Path(marker_path))
+                for marker_reason, marker_path in (completion_markers or {}).items()
+            )
             with log_path.open("w", encoding="utf-8", errors="replace") as log:
                 while process.poll() is None or not stream_finished:
+                    now = time.monotonic()
+                    if (
+                        show_window
+                        and now >= next_window_check
+                        and now - started <= 20.0
+                    ):
+                        orbital_vmd.restore_vmd_display_window(
+                            process.pid,
+                            excluded_handles=existing_vmd_windows,
+                            width=INTERACTIVE_VMD_WINDOW[0],
+                            height=INTERACTIVE_VMD_WINDOW[1],
+                            topmost=True,
+                        )
+                        next_window_check = now + 0.7
                     try:
                         item = output_queue.get(timeout=0.1)
                     except queue.Empty:
@@ -1112,15 +1269,94 @@ class AutomaticWorkflowRunner:
                         text = item.rstrip("\r\n")
                         if text:
                             self._emit("output", index=index, source=source, text=text)
+                            progress_match = re.search(
+                                r"Progress:\s*\[[^\]]*\]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+                                text,
+                                re.IGNORECASE,
+                            )
+                            if progress_match and source.casefold() == "multiwfn":
+                                raw_percent = max(
+                                    0.0,
+                                    min(100.0, float(progress_match.group(1))),
+                                )
+                                if (
+                                    last_raw_percent >= 75.0
+                                    and raw_percent <= 25.0
+                                ):
+                                    progress_pass = min(1, progress_pass + 1)
+                                last_raw_percent = raw_percent
+                                process_fraction = (
+                                    progress_pass + raw_percent / 100.0
+                                ) / 2.0
+                                start, ceiling = AUTOMATION_STAGE_PROGRESS[
+                                    STAGE_MULTIWFN
+                                ]
+                                last_process_percent = start + (
+                                    ceiling - start
+                                ) * process_fraction
+                                job = next(
+                                    (
+                                        candidate
+                                        for candidate in self.plan.jobs
+                                        if candidate.index == index
+                                    ),
+                                    None,
+                                )
+                                if job is not None:
+                                    self._emit_job_progress(
+                                        job,
+                                        last_process_percent,
+                                        f"正在生成表面数据 · {raw_percent:.0f}%",
+                                    )
+                    if now >= next_heartbeat:
+                        job = next(
+                            (
+                                candidate
+                                for candidate in self.plan.jobs
+                                if candidate.index == index
+                            ),
+                            None,
+                        )
+                        if job is not None:
+                            start, _ceiling = AUTOMATION_STAGE_PROGRESS.get(
+                                job.stage, (last_process_percent, last_process_percent)
+                            )
+                            heartbeat_percent = max(start, last_process_percent)
+                            heartbeat_message = {
+                                STAGE_MULTIWFN: "正在生成电子密度与静电势数据",
+                                STAGE_VMD_RENDER: "正在等待 VMD 调整或完成渲染",
+                            }.get(job.stage, "正在处理")
+                            self._emit_job_progress(
+                                job, heartbeat_percent, heartbeat_message
+                            )
+                        next_heartbeat = now + 1.0
                     if self._cancel_event.is_set() and process.poll() is None:
                         reason = "cancelled"
                         self._terminate_process(process)
-                    elif (
-                        time.monotonic() - started > timeout_seconds
-                        and process.poll() is None
-                    ):
-                        reason = "timeout"
-                        self._terminate_process(process)
+                    elif not reason:
+                        completed = next(
+                            (
+                                marker_reason
+                                for marker_reason, marker_path in markers
+                                if marker_path.is_file()
+                            ),
+                            "",
+                        )
+                        if completed:
+                            reason = completed
+                            log.write(
+                                f"MolecularStudio host: detected {completed}; "
+                                "closed the interactive VMD process safely.\n"
+                            )
+                            log.flush()
+                            if process.poll() is None:
+                                self._terminate_process(process)
+                        elif (
+                            time.monotonic() - started > timeout_seconds
+                            and process.poll() is None
+                        ):
+                            reason = "timeout"
+                            self._terminate_process(process)
                 reader.join(timeout=1.0)
             return process.wait(timeout=5), reason
         finally:

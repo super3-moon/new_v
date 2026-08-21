@@ -2017,6 +2017,74 @@ def resolve_orbital_selection(
     return [_orbital_ref(dataset, orbital) for orbital in ordered]
 
 
+def total_electron_count(dataset: OrbitalDataset) -> int | None:
+    """Return the authoritative electron count when both spin counts are known."""
+
+    if dataset.alpha_electrons is None or dataset.beta_electrons is None:
+        return None
+    return int(dataset.alpha_electrons) + int(dataset.beta_electrons)
+
+
+def complete_odd_electron_boundary_pairs(
+    dataset: OrbitalDataset,
+    references: Iterable[OrbitalRef],
+) -> list[OrbitalRef]:
+    """Complete only the two index boundaries of an odd-electron selection.
+
+    A frontier expression is resolved independently in the alpha and beta
+    channels.  For an unrestricted odd-electron system this can leave the
+    same channel index selected in only one spin channel at the lower or upper
+    edge.  This helper adds the opposite-spin orbital with that exact channel
+    index at either edge only.  Interior orbitals are deliberately untouched
+    and an explicit single-spin selection remains single-spin.
+    """
+
+    refs = list(references)
+    electron_count = total_electron_count(dataset)
+    if (
+        not dataset.is_unrestricted
+        or electron_count is None
+        or electron_count % 2 == 0
+        or len(refs) < 2
+    ):
+        return refs
+
+    selected_spins = {
+        ref.spin for ref in refs if ref.spin in {SpinChannel.ALPHA, SpinChannel.BETA}
+    }
+    if selected_spins != {SpinChannel.ALPHA, SpinChannel.BETA}:
+        return refs
+
+    selected: dict[tuple[SpinChannel, int], OrbitalRef] = {
+        (ref.spin, ref.channel_index): ref for ref in refs
+    }
+    orbital_lookup = {
+        (orbital.spin, orbital.channel_index): orbital
+        for orbital in dataset.orbitals
+        if orbital.spin in {SpinChannel.ALPHA, SpinChannel.BETA}
+    }
+    boundary_indices = {
+        min(ref.channel_index for ref in refs),
+        max(ref.channel_index for ref in refs),
+    }
+    for channel_index in boundary_indices:
+        for spin in (SpinChannel.ALPHA, SpinChannel.BETA):
+            key = (spin, channel_index)
+            partner = orbital_lookup.get(key)
+            if partner is not None:
+                selected.setdefault(key, _orbital_ref(dataset, partner))
+
+    spin_order = {
+        SpinChannel.SPATIAL: 0,
+        SpinChannel.ALPHA: 0,
+        SpinChannel.BETA: 1,
+    }
+    return sorted(
+        selected.values(),
+        key=lambda ref: (spin_order[ref.spin], ref.channel_index),
+    )
+
+
 __all__ = [
     "HARTREE_TO_EV",
     "BOHR_TO_ANGSTROM",
@@ -2048,4 +2116,6 @@ __all__ = [
     "available_spin_modes",
     "selection_presets",
     "resolve_orbital_selection",
+    "total_electron_count",
+    "complete_odd_electron_boundary_pairs",
 ]

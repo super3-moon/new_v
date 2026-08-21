@@ -161,6 +161,7 @@ class AutomaticWorkflowInterfaceTests(unittest.TestCase):
         try:
             page = window.automation_page
             labels = "\n".join(label.text() for label in page.findChildren(QLabel))
+            self.assertIn("提供你的波函数与输出文件，全自动绘制", labels)
             self.assertNotIn("High 网格", labels)
             self.assertNotIn("Low 网格", labels)
             self.assertNotIn("Multiwfn + VMD · 支持批量", labels)

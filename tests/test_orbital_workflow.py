@@ -158,6 +158,41 @@ class OrbitalDataTests(GaussianFixtureMixin, unittest.TestCase):
             self.assertEqual(dataset.nbasis, 5)
             self.assertEqual([item.global_index for item in beta], [4, 5])
 
+    def test_odd_electron_completion_adds_only_matching_boundary_indices(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "odd.fchk"
+            text = "Synthetic odd UHF\nUHF STO-3G\n"
+            text += self._fch_scalar("Number of atoms", "I", 1)
+            text += self._fch_scalar("Number of alpha electrons", "I", 2)
+            text += self._fch_scalar("Number of beta electrons", "I", 1)
+            text += self._fch_scalar("Number of basis functions", "I", 4)
+            text += self._fch_scalar("Number of independent functions", "I", 4)
+            text += self._fch_array("Atomic numbers", "I", [1])
+            text += self._fch_array("Current cartesian coordinates", "R", [0.0, 0.0, 0.0])
+            text += self._fch_array("Alpha Orbital Energies", "R", [-0.8, -0.4, 0.1, 0.5])
+            text += self._fch_array("Beta Orbital Energies", "R", [-0.7, 0.2, 0.4, 0.9])
+            path.write_text(text, encoding="ascii")
+
+            dataset = orbital_data.parse_wavefunction_file(path)
+            refs = orbital_data.resolve_orbital_selection(
+                dataset,
+                mode="custom",
+                text="HOMO..LUMO+1",
+                spin_mode="both",
+            )
+            self.assertEqual(
+                {(item.spin.value, item.channel_index) for item in refs},
+                {("alpha", 2), ("alpha", 3), ("alpha", 4), ("beta", 1), ("beta", 2), ("beta", 3)},
+            )
+            completed = orbital_data.complete_odd_electron_boundary_pairs(dataset, refs)
+            self.assertEqual(
+                {(item.spin.value, item.channel_index) for item in completed},
+                {
+                    ("alpha", 1), ("alpha", 2), ("alpha", 3), ("alpha", 4),
+                    ("beta", 1), ("beta", 2), ("beta", 3), ("beta", 4),
+                },
+            )
+
 
 class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
     def _plan(self, root: Path) -> workflow.OrbitalDiagramPlan:
@@ -177,6 +212,27 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             exact = root / "orb000017_retry.cub"
             exact.write_text("right", encoding="ascii")
             self.assertEqual(workflow._fallback_cube_for_index(root, 17), exact)
+
+    def test_success_workspace_cleanup_stays_inside_run_jobs_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = self._plan(root)
+            runner = workflow.OrbitalDiagramRunner(
+                plan, Path(__file__), Path(__file__)
+            )
+            job = plan.jobs[0]
+            job.work_dir.mkdir(parents=True)
+            (job.work_dir / "temporary.vmd").write_text("process", encoding="utf-8")
+            job.status = workflow.STATUS_SUCCESS
+            runner._discard_success_intermediates()
+            self.assertFalse(job.work_dir.exists())
+
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "keep.txt").write_text("user", encoding="utf-8")
+            job.work_dir = outside
+            runner._discard_success_intermediates()
+            self.assertTrue((outside / "keep.txt").is_file())
 
     def test_single_job_progress_reports_useful_weighted_stages(self) -> None:
         events: list[dict] = []

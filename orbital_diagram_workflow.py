@@ -10,7 +10,6 @@ recoverable pipeline, process lifecycle, result collection and final diagram.
 from __future__ import annotations
 
 import copy
-import ctypes
 import csv
 import hashlib
 import json
@@ -125,6 +124,9 @@ SETTING_RETRY_STAGE = {
     "show_diagram_title": STAGE_COMPOSE,
     "output_location": STAGE_COLLECT,
     "keep_cubes": STAGE_COLLECT,
+    # A previous successful run may already have removed its workspace, so
+    # enabling this option during resume must rebuild the process artifacts.
+    "keep_intermediate_files": STAGE_PARSE,
 }
 
 EventCallback = Callable[[dict], None]
@@ -354,6 +356,7 @@ class OrbitalDiagramSettings:
     show_diagram_title: bool = False
     output_location: str = "result_root"
     keep_cubes: bool = True
+    keep_intermediate_files: bool = False
     strict_pair_validation: bool = True
     multiwfn_timeout_seconds: int = 3600
     viewpoint_timeout_seconds: int = 86400
@@ -389,6 +392,8 @@ class OrbitalDiagramSettings:
         self.energy_decimals = max(0, min(8, int(self.energy_decimals)))
         self.title = str(self.title or "Molecular orbital energy diagram").strip()
         self.show_diagram_title = bool(self.show_diagram_title)
+        self.keep_cubes = bool(self.keep_cubes)
+        self.keep_intermediate_files = bool(self.keep_intermediate_files)
         if self.output_location not in {"result_root", "input_directory"}:
             raise OrbitalDiagramValidationError("未知的结果保存位置。")
         self.multiwfn_timeout_seconds = max(30, min(172800, int(self.multiwfn_timeout_seconds)))
@@ -910,6 +915,8 @@ class OrbitalDiagramRunner:
             self.plan.status = STATUS_FAILED
         self._write_summary()
         self._write_manifest()
+        if not self.plan.settings.keep_intermediate_files:
+            self._discard_success_intermediates()
         result = {
             "status": self.plan.status,
             "run_dir": str(self.plan.run_dir),
@@ -1558,22 +1565,27 @@ class OrbitalDiagramRunner:
                     ]
                 )
         job.outputs.append(str(data_target.resolve()))
-        view_source = Path(job.viewpoint_path)
-        if view_source.is_file():
-            view_target = _unique_target(job.result_dir / f"{label}_viewpoint.json")
-            shutil.copy2(view_source, view_target)
-            job.outputs.append(str(view_target.resolve()))
-        save_state_source = Path(job.vmd_save_state_path) if job.vmd_save_state_path else Path()
-        if job.vmd_save_state_path and save_state_source.is_file():
-            save_state_target = _unique_target(job.result_dir / f"{label}_VMD_final_state.vmd")
-            shutil.copy2(save_state_source, save_state_target)
-            job.outputs.append(str(save_state_target.resolve()))
-        logs = self.plan.run_dir / "logs" / label
-        for source in job.work_dir.rglob("*.log"):
-            target = _unique_target(logs / source.name)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            job.outputs.append(str(target.resolve()))
+        if self.plan.settings.keep_intermediate_files:
+            view_source = Path(job.viewpoint_path)
+            if view_source.is_file():
+                view_target = _unique_target(job.result_dir / f"{label}_viewpoint.json")
+                shutil.copy2(view_source, view_target)
+                job.outputs.append(str(view_target.resolve()))
+            save_state_source = (
+                Path(job.vmd_save_state_path) if job.vmd_save_state_path else Path()
+            )
+            if job.vmd_save_state_path and save_state_source.is_file():
+                save_state_target = _unique_target(
+                    job.result_dir / f"{label}_VMD_final_state.vmd"
+                )
+                shutil.copy2(save_state_source, save_state_target)
+                job.outputs.append(str(save_state_target.resolve()))
+            logs = self.plan.run_dir / "logs" / label
+            for source in job.work_dir.rglob("*.log"):
+                target = _unique_target(logs / source.name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                job.outputs.append(str(target.resolve()))
         if self.plan.settings.keep_cubes:
             cube_dir = job.result_dir / f"{label}_cubes"
             cube_dir.mkdir(parents=True, exist_ok=True)
@@ -1604,6 +1616,31 @@ class OrbitalDiagramRunner:
             if path.is_file() and path.suffix.casefold() in {".cub", ".cube"}:
                 path.unlink()
 
+    def _discard_success_intermediates(self) -> None:
+        """Remove successful task workspaces after all final outputs are collected."""
+
+        jobs_root = (self.plan.run_dir / "jobs").resolve()
+        for job in self.plan.jobs:
+            if job.status != STATUS_SUCCESS:
+                continue
+            work_dir = job.work_dir.resolve()
+            try:
+                work_dir.relative_to(jobs_root)
+            except ValueError:
+                continue
+            if not work_dir.is_dir():
+                continue
+            try:
+                shutil.rmtree(work_dir)
+            except OSError as exc:
+                self._emit(
+                    "cleanup_warning",
+                    index=job.index,
+                    job_id=job.id,
+                    wavefunction_path=str(job.pair.wavefunction_path),
+                    message=f"部分过程文件未能清理：{exc}",
+                )
+
     def _run_process(
         self,
         command: list[str],
@@ -1621,6 +1658,9 @@ class OrbitalDiagramRunner:
     ) -> tuple[int, str]:
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" and hide_window else 0
         encoding = locale.getpreferredencoding(False) or "utf-8"
+        existing_vmd_windows = (
+            orbital_vmd.vmd_display_window_handles() if show_window else set()
+        )
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
@@ -1656,7 +1696,6 @@ class OrbitalDiagramRunner:
             thread.start()
             started = time.monotonic()
             next_window_check = started
-            window_restored = False
             stream_finished = False
             reason = ""
             markers = tuple(
@@ -1669,12 +1708,17 @@ class OrbitalDiagramRunner:
                     now = time.monotonic()
                     if (
                         show_window
-                        and not window_restored
                         and now >= next_window_check
                         and now - started <= 20.0
                     ):
-                        window_restored = self._restore_vmd_window(process.pid)
-                        next_window_check = now + 0.35
+                        self._restore_vmd_window(
+                            process.pid,
+                            excluded_handles=existing_vmd_windows,
+                        )
+                        # Repeat briefly even after the first successful restore:
+                        # VMD 1.9.3 can apply its remembered minimized state a
+                        # moment after creating the OpenGL window.
+                        next_window_check = now + 0.7
                     try:
                         item = output_queue.get(timeout=0.1)
                     except queue.Empty:
@@ -1739,98 +1783,18 @@ class OrbitalDiagramRunner:
                 pass
 
     @staticmethod
-    def _restore_vmd_window(process_id: int) -> bool:
-        """Restore and foreground the interactive VMD OpenGL window on Windows."""
+    def _restore_vmd_window(
+        process_id: int, *, excluded_handles: Iterable[int] = ()
+    ) -> bool:
+        """Restore the launcher-owned or newly created VMD OpenGL window."""
 
-        if os.name != "nt":
-            return False
-        try:
-            from ctypes import wintypes
-
-            user32 = ctypes.windll.user32
-            matches: list[int] = []
-            callback_type = ctypes.WINFUNCTYPE(
-                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-            )
-            user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
-            user32.EnumWindows.restype = wintypes.BOOL
-            user32.GetWindowThreadProcessId.argtypes = [
-                wintypes.HWND,
-                ctypes.POINTER(wintypes.DWORD),
-            ]
-            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-            user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-            user32.GetWindowTextLengthW.restype = ctypes.c_int
-            user32.GetWindowTextW.argtypes = [
-                wintypes.HWND,
-                wintypes.LPWSTR,
-                ctypes.c_int,
-            ]
-            user32.GetWindowTextW.restype = ctypes.c_int
-            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-            user32.ShowWindow.restype = wintypes.BOOL
-            user32.SetWindowPos.argtypes = [
-                wintypes.HWND,
-                wintypes.HWND,
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_int,
-                wintypes.UINT,
-            ]
-            user32.SetWindowPos.restype = wintypes.BOOL
-            user32.BringWindowToTop.argtypes = [wintypes.HWND]
-            user32.BringWindowToTop.restype = wintypes.BOOL
-            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-            user32.SetForegroundWindow.restype = wintypes.BOOL
-            user32.IsWindowVisible.argtypes = [wintypes.HWND]
-            user32.IsWindowVisible.restype = wintypes.BOOL
-
-            @callback_type
-            def collect(hwnd, _lparam):
-                owner = wintypes.DWORD()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-                if int(owner.value) != int(process_id):
-                    return True
-                length = int(user32.GetWindowTextLengthW(hwnd))
-                if length <= 0:
-                    return True
-                buffer = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buffer, length + 1)
-                title = buffer.value.casefold()
-                if "opengl display" in title or (
-                    title.startswith("vmd ") and "display" in title
-                ):
-                    raw_hwnd = ctypes.cast(hwnd, ctypes.c_void_p).value
-                    if raw_hwnd is not None:
-                        matches.append(raw_hwnd)
-                return True
-
-            user32.EnumWindows(collect, 0)
-            if not matches:
-                return False
-            width, height = INTERACTIVE_VMD_WINDOW
-            restored = False
-            for raw_hwnd in matches:
-                hwnd = wintypes.HWND(raw_hwnd)
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE also clears minimized state.
-                positioned = user32.SetWindowPos(
-                    hwnd,
-                    wintypes.HWND(0),
-                    24,
-                    32,
-                    width,
-                    height,
-                    0x0040,
-                )
-                user32.BringWindowToTop(hwnd)
-                user32.SetForegroundWindow(hwnd)
-                restored = restored or bool(
-                    positioned and user32.IsWindowVisible(hwnd)
-                )
-            return restored
-        except (AttributeError, OSError, TypeError, ValueError):
-            return False
+        return orbital_vmd.restore_vmd_display_window(
+            process_id,
+            excluded_handles=excluded_handles,
+            width=INTERACTIVE_VMD_WINDOW[0],
+            height=INTERACTIVE_VMD_WINDOW[1],
+            topmost=True,
+        )
 
 
 # Concise aliases for clients that prefer the generic workflow terminology.
