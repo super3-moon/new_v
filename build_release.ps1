@@ -22,22 +22,26 @@ foreach ($required in @($specFile, $entry, $styleDir, $customJson)) {
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($Variant)) {
-    $versions = @()
+    # A dated release is a replaceable snapshot: repeated builds on the same
+    # day keep only the latest package instead of accumulating _v2/_v3 folders.
+    $folderName = $DateTag
+    $releaseRootFull = [IO.Path]::GetFullPath($releaseRoot).TrimEnd('\')
+    $sameDayPattern = "^$([regex]::Escape($DateTag))(?:_v\d+)?$"
     foreach ($directory in Get-ChildItem -LiteralPath $releaseRoot -Directory) {
-        if ($directory.Name -eq $DateTag) {
-            $versions += 1
+        if ($directory.Name -notmatch $sameDayPattern) {
+            continue
         }
-        elseif ($directory.Name -match "^$([regex]::Escape($DateTag))_v(?<version>\d+)$") {
-            $versions += [int]$Matches.version
+        $candidate = [IO.Path]::GetFullPath($directory.FullName)
+        $candidateParent = [IO.Path]::GetDirectoryName($candidate).TrimEnd('\')
+        if (-not [string]::Equals(
+            $candidateParent,
+            $releaseRootFull,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Refusing to remove release path outside the release root: $candidate"
         }
+        Remove-Item -LiteralPath $candidate -Recurse -Force
     }
-    $nextVersion = if ($versions.Count -eq 0) {
-        1
-    }
-    else {
-        ([int](($versions | Measure-Object -Maximum).Maximum)) + 1
-    }
-    $folderName = if ($nextVersion -eq 1) { $DateTag } else { "${DateTag}_v$nextVersion" }
 }
 else {
     $folderName = "${DateTag}_$Variant"

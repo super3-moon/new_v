@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 import automatic_workflows as automation
+import orbital_vmd
 import vmd_style_tool as core
 
 
@@ -45,26 +46,30 @@ class FakeProcessRunner(automation.AutomaticWorkflowRunner):
         super().__init__(*args, **kwargs)
         self.fail_vmd = fail_vmd
 
-    def _run_process(self, command, *, cwd, env, stdin_text, timeout_seconds, log_path, source, index, hide_window):  # type: ignore[override]
+    def _run_process(self, command, *, cwd, env, stdin_text, timeout_seconds, log_path, source, index, hide_window, **_kwargs):  # type: ignore[override]
         log_path.write_text(f"{source} completed\n", encoding="utf-8")
         if source == "Multiwfn":
             (cwd / "density.cub").write_text(
                 cube_text(dimensions=3, step=0.5), encoding="utf-8"
             )
             (cwd / "totesp.cub").write_text(
-                cube_text(dimensions=2, step=1.0), encoding="utf-8"
+                cube_text(dimensions=3, step=0.5), encoding="utf-8"
             )
             return 0, ""
+
+    def _render_automatic(self, job):  # type: ignore[override]
+        self._set_stage(job, automation.STAGE_VMD_RENDER, "正在生成图片")
         if self.fail_vmd:
-            return 7, ""
+            job.vmd_status = automation.STATUS_FAILED
+            raise RuntimeError("VMD 绘图失败。")
         from PySide6.QtGui import QColor, QImage
 
         image = QImage(4, 4, QImage.Format.Format_ARGB32)
         image.fill(QColor("#4f86d9"))
-        self.assert_image_saved = image.save(
-            str(cwd / str(env["RENDER_FILE"])), "PNG"
-        )
-        return 0, ""
+        output = job.work_dir / f"{job.input_path.stem}_ESP.png"
+        self.assert_image_saved = image.save(str(output), "PNG")
+        job.image_path = str(output.resolve())
+        job.vmd_status = automation.STATUS_SUCCESS
 
 
 class AutomaticWorkflowTests(unittest.TestCase):
@@ -112,6 +117,28 @@ class AutomaticWorkflowTests(unittest.TestCase):
         self.assertIn("render TachyonInternal", tcl)
         self.assertTrue(tcl.rstrip().endswith("quit"))
         self.assertNotIn("menu render on", tcl)
+
+    def test_multiwfn_esp_reuses_density_cube_grid(self) -> None:
+        self.assertIn("\n12\n8\ndensity.cub\n2\n0\nq\n", automation.ESP_STDIN_SEQUENCE)
+
+    def test_esp_capture_registers_scene_for_complete_state_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cube = root / "density.cub"
+            cube.write_text(cube_text(dimensions=3, step=0.5), encoding="ascii")
+            snapshot = esp_style_snapshot()
+            initial = automation.build_interactive_vmd_tcl(
+                snapshot["style"], snapshot["rep0_commands"]
+            )
+            script = orbital_vmd.build_interactive_capture_tcl(
+                cube,
+                root / "esp.capture",
+                snapshot["style"],
+                initial_scene_tcl=initial,
+            )
+            self.assertIn("set ::MO_REFERENCE_MOL [molinfo top]", script)
+            self.assertIn("mol modcolor 1 top Volume 1", script)
+            self.assertIn("save_state $::MO_DEBUG_STATE_PATH", script)
 
     def test_full_pipeline_collects_png_cubes_logs_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -165,18 +192,22 @@ class AutomaticWorkflowTests(unittest.TestCase):
             test_case = self
 
             def prepare_retry(retry_runner) -> None:
-                def fake_process(_runner, command, *, cwd, env, stdin_text, timeout_seconds, log_path, source, index, hide_window):
+                def fake_render(_runner, retry_job):
                     from PySide6.QtGui import QColor, QImage
 
-                    log_path.write_text("VMD retry completed\n", encoding="utf-8")
+                    _runner._set_stage(
+                        retry_job, automation.STAGE_VMD_RENDER, "正在重试生成图片"
+                    )
                     image = QImage(4, 4, QImage.Format.Format_ARGB32)
                     image.fill(QColor("#4f86d9"))
+                    output = retry_job.work_dir / f"{retry_job.input_path.stem}_ESP.png"
                     test_case.assertTrue(
-                        image.save(str(cwd / str(env["RENDER_FILE"])), "PNG")
+                        image.save(str(output), "PNG")
                     )
-                    return 0, ""
+                    retry_job.image_path = str(output.resolve())
+                    retry_job.vmd_status = automation.STATUS_SUCCESS
 
-                retry_runner._run_process = types.MethodType(fake_process, retry_runner)
+                retry_runner._render_automatic = types.MethodType(fake_render, retry_runner)
 
             retry = automation.retry_drawing_from_manifest(
                 plan.manifest_path,

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
+import ctypes
 import json
 import math
 import os
@@ -48,6 +49,133 @@ class OrbitalVmdError(RuntimeError):
 
 class OrbitalVmdValidationError(OrbitalVmdError, ValueError):
     """Raised when an input, captured state, or render output is invalid."""
+
+
+def vmd_display_window_handles(process_id: int | None = None) -> set[int]:
+    """Return visible VMD OpenGL top-level windows on Windows.
+
+    ``vmd.exe`` may create the OpenGL window in a child process, so callers can
+    take a pre-launch snapshot and later identify newly created windows even
+    when their owner PID differs from the launcher PID.
+    """
+
+    if os.name != "nt":
+        return set()
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        callback_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+        )
+        user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [
+            wintypes.HWND,
+            wintypes.LPWSTR,
+            ctypes.c_int,
+        ]
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        matches: set[int] = set()
+
+        @callback_type
+        def collect(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if process_id is not None and int(owner.value) != int(process_id):
+                return True
+            length = int(user32.GetWindowTextLengthW(hwnd))
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = buffer.value.casefold()
+            if "opengl display" in title or (
+                title.startswith("vmd ") and "display" in title
+            ):
+                raw = ctypes.cast(hwnd, ctypes.c_void_p).value
+                if raw is not None:
+                    matches.add(int(raw))
+            return True
+
+        user32.EnumWindows(collect, 0)
+        return matches
+    except (AttributeError, OSError, TypeError, ValueError):
+        return set()
+
+
+def restore_vmd_display_window(
+    process_id: int,
+    *,
+    excluded_handles: Iterable[int] = (),
+    width: int = 1180,
+    height: int = 700,
+    topmost: bool = True,
+) -> bool:
+    """Restore, size and foreground the newly launched VMD display window."""
+
+    if os.name != "nt":
+        return False
+    excluded = {int(value) for value in excluded_handles}
+    owned = vmd_display_window_handles(process_id)
+    candidates = owned or (vmd_display_window_handles() - excluded)
+    if not candidates:
+        return False
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindowAsync.restype = wintypes.BOOL
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        user32.BringWindowToTop.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        insert_after = wintypes.HWND(-1 if topmost else 0)
+        restored = False
+        for raw in candidates:
+            hwnd = wintypes.HWND(raw)
+            user32.ShowWindowAsync(hwnd, 9)  # SW_RESTORE
+            positioned = user32.SetWindowPos(
+                hwnd,
+                insert_after,
+                24,
+                32,
+                max(640, int(width)),
+                max(480, int(height)),
+                0x0040,  # SWP_SHOWWINDOW
+            )
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            restored = restored or bool(
+                positioned and user32.IsWindowVisible(hwnd)
+            )
+        return restored
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -975,6 +1103,7 @@ def build_interactive_capture_tcl(
     width: int = 960,
     height: int = 720,
     debug_state_path: Path | str | None = None,
+    initial_scene_tcl: str | None = None,
 ) -> str:
     """Build an interactive VMD script that saves a validated data snapshot.
 
@@ -996,6 +1125,21 @@ def build_interactive_capture_tcl(
     debug = Path(debug_state_path).expanduser().resolve() if debug_state_path else None
     cancel_marker = capture_cancel_marker_path(state)
     error_log = capture_error_log_path(state)
+    if initial_scene_tcl is None:
+        initial_scene_lines = _initial_signed_scene_tcl(
+            cube, style, rep0_commands
+        )
+    else:
+        scene_text = str(initial_scene_tcl)
+        if "\x00" in scene_text or len(scene_text.encode("utf-8")) > 2 * 1024 * 1024:
+            raise OrbitalVmdValidationError("Initial VMD scene script is invalid.")
+        initial_scene_lines = scene_text.rstrip().splitlines()
+        initial_scene_lines.extend(
+            [
+                "if {[llength [molinfo list]] < 1} { error \"The initial VMD scene contains no molecule\" }",
+                "set ::MO_REFERENCE_MOL [molinfo top]",
+            ]
+        )
 
     lines: list[str] = [
         "# Generated by orbital_vmd.py; VMD 1.9.3 / Tcl 8.5 compatible.",
@@ -1012,7 +1156,7 @@ def build_interactive_capture_tcl(
         "catch {file delete -force $::MO_ERROR_PATH}",
         "if {$::MO_DEBUG_STATE_PATH ne \"\"} { catch {file delete -force $::MO_DEBUG_STATE_PATH} }",
         "trace add variable ::vmd_quit write _mo_quit_trace",
-        *_initial_signed_scene_tcl(cube, style, rep0_commands),
+        *initial_scene_lines,
         f"display resize {width} {height}",
         # VMD remembers a maximized OpenGL window between sessions on some
         # Windows installations.  An explicit resize followed by reposition
@@ -1889,4 +2033,6 @@ __all__ = [
     "validate_render_output",
     "write_batch_render_script",
     "write_interactive_capture_script",
+    "vmd_display_window_handles",
+    "restore_vmd_display_window",
 ]

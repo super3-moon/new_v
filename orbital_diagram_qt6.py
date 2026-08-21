@@ -797,13 +797,27 @@ class OrbitalDiagramPage(QWidget):
         self.spin_combo.addItem("空间轨道", "spatial")
         self.spin_combo.currentIndexChanged.connect(self._selection_controls_changed)
         quick_grid.addWidget(self.spin_combo, 1, 1, 1, 5)
-        quick_grid.addWidget(QLabel("手动表达式（可选）"), 2, 0)
+
+        self.odd_boundary_match_check = QCheckBox(
+            "奇电子体系自动补齐范围两端的 α/β 对应轨道"
+        )
+        self.odd_boundary_match_check.setChecked(True)
+        self.odd_boundary_match_check.setToolTip(
+            "仅检查当前最低和最高两个轨道序号；若同序号的另一自旋轨道未选中，则自动补入。"
+        )
+        self.odd_boundary_match_check.toggled.connect(
+            self._selection_controls_changed
+        )
+        self.odd_boundary_match_check.hide()
+        quick_grid.addWidget(self.odd_boundary_match_check, 2, 1, 1, 5)
+
+        quick_grid.addWidget(QLabel("手动表达式（可选）"), 3, 0)
         self.manual_expression_edit = QLineEdit()
         self.manual_expression_edit.setPlaceholderText(
             "如 HOMO-2..LUMO+3；或 alpha:HOMO-1..LUMO+2; beta:HOMO..LUMO"
         )
         self.manual_expression_edit.textChanged.connect(self._selection_controls_changed)
-        quick_grid.addWidget(self.manual_expression_edit, 2, 1, 1, 5)
+        quick_grid.addWidget(self.manual_expression_edit, 3, 1, 1, 5)
         quick_grid.setColumnStretch(1, 1)
         select_layout.addLayout(quick_grid)
 
@@ -902,7 +916,14 @@ class OrbitalDiagramPage(QWidget):
         self.keep_cubes_check = QCheckBox("完成后保留轨道 Cube")
         self.keep_cubes_check.setChecked(True)
         self.keep_cubes_check.toggled.connect(self._configuration_changed)
-        output_grid.addWidget(self.keep_cubes_check, 3, 2, 1, 2)
+        output_grid.addWidget(self.keep_cubes_check, 3, 2)
+        self.keep_intermediates_check = QCheckBox("保留过程文件")
+        self.keep_intermediates_check.setChecked(False)
+        self.keep_intermediates_check.setToolTip(
+            "保留用于复现或排查的过程文件；最终能级图、轨道图片和数据表始终保留。"
+        )
+        self.keep_intermediates_check.toggled.connect(self._configuration_changed)
+        output_grid.addWidget(self.keep_intermediates_check, 3, 3)
         self.diagram_title_check = QCheckBox("显示图标题")
         self.diagram_title_check.setChecked(False)
         self.diagram_title_check.toggled.connect(self._configuration_changed)
@@ -1541,7 +1562,16 @@ class OrbitalDiagramPage(QWidget):
         spec = self._selection_spec()
         errors: list[str] = []
         selected_count = 0
+        completed_boundary_count = 0
         restored_rows = 0
+        odd_boundary_available = any(
+            dataset is not None
+            and dataset.is_unrestricted
+            and orbital_data.total_electron_count(dataset) is not None
+            and orbital_data.total_electron_count(dataset) % 2 == 1
+            for dataset in self.datasets
+        )
+        self.odd_boundary_match_check.setVisible(odd_boundary_available)
         saved_by_path: dict[str, set[tuple[str, int]]] = {}
         if self._restore_selection_pending:
             for selection in self._saved_orbital_selections:
@@ -1565,6 +1595,19 @@ class OrbitalDiagramPage(QWidget):
                     spin_mode=str(spec["spin_mode"]),
                     text=spec.get("text"),
                 )
+                if (
+                    odd_boundary_available
+                    and self.odd_boundary_match_check.isChecked()
+                ):
+                    base_keys = {
+                        (ref.spin, ref.channel_index) for ref in refs
+                    }
+                    refs = orbital_data.complete_odd_electron_boundary_pairs(
+                        dataset, refs
+                    )
+                    completed_boundary_count += sum(
+                        (ref.spin, ref.channel_index) not in base_keys for ref in refs
+                    )
             except orbital_data.OrbitalDataError as exc:
                 errors.append(f"{pair.label}：{exc}")
                 continue
@@ -1617,9 +1660,10 @@ class OrbitalDiagramPage(QWidget):
         if errors:
             self.selection_status_label.setText("\n".join(errors))
         elif selected_count:
-            self.selection_status_label.setText(
-                f"已选择 {selected_count} 个轨道；可以取消不需要绘制的项目。"
-            )
+            message = f"已选择 {selected_count} 个轨道；可以取消不需要绘制的项目。"
+            if completed_boundary_count:
+                message += f" 已自动补齐能量范围边界的 {completed_boundary_count} 个对应轨道。"
+            self.selection_status_label.setText(message)
         else:
             self.selection_status_label.setText("添加并核验文件后，这里会逐项显示实际绘制的轨道。")
 
@@ -1713,6 +1757,8 @@ class OrbitalDiagramPage(QWidget):
                 self.output_location_combo.currentData() or "result_root"
             ),
             "keep_cubes": self.keep_cubes_check.isChecked(),
+            "keep_intermediate_files": self.keep_intermediates_check.isChecked(),
+            "complete_odd_boundaries": self.odd_boundary_match_check.isChecked(),
             "strict_pair_validation": True,
         }
 
@@ -2511,6 +2557,12 @@ class OrbitalDiagramPage(QWidget):
             )
             self.output_location_combo.setCurrentIndex(max(0, output_index))
             self.keep_cubes_check.setChecked(bool(saved.get("keep_cubes", True)))
+            self.keep_intermediates_check.setChecked(
+                bool(saved.get("keep_intermediate_files", False))
+            )
+            self.odd_boundary_match_check.setChecked(
+                bool(saved.get("complete_odd_boundaries", True))
+            )
             self.diagram_title_edit.setText(
                 str(saved.get("title") or "Molecular orbital energy diagram")
             )
