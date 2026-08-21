@@ -549,6 +549,19 @@ class OrbitalDiagramQtTests(unittest.TestCase):
             finally:
                 page.close()
 
+    def test_publication_layout_hides_optional_title_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            page = OrbitalDiagramPage(Path(temporary), lambda: "", lambda: "")
+            try:
+                self.assertFalse(page.diagram_title_check.isChecked())
+                self.assertFalse(page.diagram_title_edit.isEnabled())
+                self.assertFalse(page._settings()["show_diagram_title"])
+                page.diagram_title_check.setChecked(True)
+                self.assertTrue(page.diagram_title_edit.isEnabled())
+                self.assertTrue(page._settings()["show_diagram_title"])
+            finally:
+                page.close()
+
 
 if __name__ == "__main__":
     unittest.main()

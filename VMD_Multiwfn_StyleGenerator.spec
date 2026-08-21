@@ -21,6 +21,7 @@ a = Analysis(
     ],
     hiddenimports=[
         'orbital_diagram_workflow',
+        'orbital_diagram_renderer',
         'orbital_data',
         'orbital_vmd',
         'PIL',
