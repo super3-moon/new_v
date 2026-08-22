@@ -158,7 +158,7 @@ class OrbitalDataTests(GaussianFixtureMixin, unittest.TestCase):
             self.assertEqual(dataset.nbasis, 5)
             self.assertEqual([item.global_index for item in beta], [4, 5])
 
-    def test_odd_electron_completion_adds_only_matching_boundary_indices(self) -> None:
+    def test_odd_electron_completion_requires_matching_boundary_energy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "odd.fchk"
             text = "Synthetic odd UHF\nUHF STO-3G\n"
@@ -187,9 +187,37 @@ class OrbitalDataTests(GaussianFixtureMixin, unittest.TestCase):
             completed = orbital_data.complete_odd_electron_boundary_pairs(dataset, refs)
             self.assertEqual(
                 {(item.spin.value, item.channel_index) for item in completed},
+                {(item.spin.value, item.channel_index) for item in refs},
+            )
+
+    def test_odd_electron_completion_adds_only_degenerate_outer_partners(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "odd_degenerate.fchk"
+            text = "Synthetic odd UHF\nUHF STO-3G\n"
+            text += self._fch_scalar("Number of atoms", "I", 1)
+            text += self._fch_scalar("Number of alpha electrons", "I", 2)
+            text += self._fch_scalar("Number of beta electrons", "I", 1)
+            text += self._fch_scalar("Number of basis functions", "I", 4)
+            text += self._fch_scalar("Number of independent functions", "I", 4)
+            text += self._fch_array("Atomic numbers", "I", [1])
+            text += self._fch_array("Current cartesian coordinates", "R", [0.0, 0.0, 0.0])
+            text += self._fch_array("Alpha Orbital Energies", "R", [-0.8, -0.4, 0.1, 0.3])
+            text += self._fch_array("Beta Orbital Energies", "R", [-0.4, -0.2, 0.3, 0.9])
+            path.write_text(text, encoding="ascii")
+
+            dataset = orbital_data.parse_wavefunction_file(path)
+            refs = orbital_data.resolve_orbital_selection(
+                dataset,
+                mode="custom",
+                text="alpha:2-3; beta:2-3",
+                spin_mode="both",
+            )
+            completed = orbital_data.complete_odd_electron_boundary_pairs(dataset, refs)
+            self.assertEqual(
+                {(item.spin.value, item.channel_index) for item in completed},
                 {
-                    ("alpha", 1), ("alpha", 2), ("alpha", 3), ("alpha", 4),
-                    ("beta", 1), ("beta", 2), ("beta", 3), ("beta", 4),
+                    ("alpha", 2), ("alpha", 3), ("alpha", 4),
+                    ("beta", 1), ("beta", 2), ("beta", 3),
                 },
             )
 
@@ -212,6 +240,100 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             exact = root / "orb000017_retry.cub"
             exact.write_text("right", encoding="ascii")
             self.assertEqual(workflow._fallback_cube_for_index(root, 17), exact)
+
+    def test_collection_keeps_png_and_html_at_task_root_and_groups_support_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = self._plan(root)
+            runner = workflow.OrbitalDiagramRunner(plan, Path(__file__), Path(__file__))
+            job = plan.jobs[0]
+            job.work_dir.mkdir(parents=True)
+            dataset, refs = workflow.inspect_orbital_pair(job.pair, plan.settings)
+            ref = refs[0]
+            job.orbitals = [ref.to_dict()]
+            job.reference_orbital = ref.to_dict()
+            diagram = job.work_dir / "diagram.png"
+            diagram.write_bytes(b"png" * 40)
+            svg = job.work_dir / "diagram.svg"
+            svg.write_text(
+                '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>',
+                encoding="utf-8",
+            )
+            image = job.work_dir / "orbital.png"
+            image.write_bytes(b"image" * 30)
+            cube = job.work_dir / f"orb{ref.global_index:06d}.cub"
+            cube.write_bytes(b"cube" * 30)
+            key = workflow._orbital_key(ref)
+            job.diagram_path = str(diagram)
+            job.diagram_svg_path = str(svg)
+            job.images = {key: str(image)}
+            job.cubes = {key: str(cube)}
+            job.reference_cube = str(cube)
+
+            runner._collect(job)
+
+            self.assertEqual(Path(job.diagram_path).parent, plan.run_dir)
+            self.assertEqual(Path(job.diagram_html_path).parent, plan.run_dir)
+            self.assertEqual(Path(job.diagram_svg_path).parent.parent.name, "diagrams")
+            self.assertEqual(Path(job.images[key]).parent.parent.name, "orbitals")
+            self.assertEqual(Path(job.cubes[key]).parent.parent.name, "cubes")
+            self.assertTrue((plan.run_dir / "data").is_dir())
+            self.assertFalse((plan.run_dir / "results").exists())
+            html_text = Path(job.diagram_html_path).read_text(encoding="utf-8")
+            self.assertIn("<svg", html_text)
+            self.assertNotIn("<?xml", html_text)
+
+            job.status = workflow.STATUS_SUCCESS
+            runner._discard_success_intermediates()
+            runner._prune_empty_output_directories()
+            self.assertFalse((plan.run_dir / "jobs").exists())
+            self.assertFalse((plan.run_dir / "logs").exists())
+
+    def test_previous_task_reuses_only_available_overlapping_cube(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous = self._plan(root / "previous")
+            previous.run_dir.mkdir(parents=True)
+            previous.records_dir.mkdir(parents=True)
+            dataset, refs = workflow.inspect_orbital_pair(
+                previous.jobs[0].pair, previous.settings
+            )
+            reference = workflow.OrbitalDiagramRunner._reference_orbital(dataset)
+            source = OrbitalVmdTests._cube(
+                previous.run_dir / f"orb{reference.global_index:06d}.cub"
+            )
+            state = OrbitalVmdTests._state(source)
+            image = previous.run_dir / f"{workflow._orbital_artifact_stem(reference)}.png"
+            image.write_bytes(b"reusable-image" * 10)
+            key = workflow._orbital_key(reference)
+            previous.jobs[0].cubes = {key: str(previous.run_dir / "deleted.cub")}
+            previous.jobs[0].images = {key: str(previous.run_dir / "deleted.png")}
+            previous.jobs[0].viewpoint_state = state.to_dict()
+            previous.jobs[0].outputs = [str(source), str(image)]
+            previous.jobs[0].status = workflow.STATUS_SUCCESS
+            previous.manifest_path.write_text(
+                json.dumps(previous.to_dict(), ensure_ascii=False), encoding="utf-8"
+            )
+
+            settings = previous.settings.to_dict()
+            settings["reuse_run_dir"] = str(previous.run_dir)
+            current = workflow.create_orbital_diagram_plan(
+                [previous.jobs[0].pair], root / "current", settings
+            )
+            runner = workflow.OrbitalDiagramRunner(
+                current, Path(__file__), Path(__file__)
+            )
+            job = current.jobs[0]
+            job.work_dir.mkdir(parents=True)
+            runner._prepare_previous_reuse(job, refs, reference)
+
+            self.assertEqual(job.reused_cubes, 1)
+            self.assertTrue(Path(job.cubes[key]).is_file())
+            self.assertEqual(Path(job.reference_cube), Path(job.cubes[key]))
+            self.assertEqual(job.reuse_source, str(previous.run_dir))
+            runner._reuse_previous_images(job, [reference], state)
+            self.assertEqual(job.reused_images, 1)
+            self.assertTrue(Path(job.images[key]).is_file())
 
     def test_success_workspace_cleanup_stays_inside_run_jobs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -320,6 +442,7 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             marker.write_bytes(b"unchanged")
             plan.jobs = [first, selected, untouched]
             plan.run_dir.mkdir(parents=True, exist_ok=True)
+            plan.manifest_path.parent.mkdir(parents=True, exist_ok=True)
             plan.manifest_path.write_text(
                 json.dumps(plan.to_dict(), ensure_ascii=False), encoding="utf-8"
             )
@@ -348,6 +471,7 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             plan = self._plan(Path(temporary))
             plan.jobs[0].status = workflow.STATUS_SUCCESS
             plan.run_dir.mkdir(parents=True, exist_ok=True)
+            plan.manifest_path.parent.mkdir(parents=True, exist_ok=True)
             plan.manifest_path.write_text(
                 json.dumps(plan.to_dict(), ensure_ascii=False), encoding="utf-8"
             )

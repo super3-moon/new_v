@@ -803,7 +803,7 @@ class OrbitalDiagramPage(QWidget):
         )
         self.odd_boundary_match_check.setChecked(True)
         self.odd_boundary_match_check.setToolTip(
-            "仅检查当前最低和最高两个轨道序号；若同序号的另一自旋轨道未选中，则自动补入。"
+            "仅检查当前最低和最高能级；只有存在能量相同（容差内）的另一自旋轨道时才补入。"
         )
         self.odd_boundary_match_check.toggled.connect(
             self._selection_controls_changed
@@ -938,6 +938,17 @@ class OrbitalDiagramPage(QWidget):
         self.energy_unit_combo.addItem("能量：Hartree", "Hartree")
         self.energy_unit_combo.currentIndexChanged.connect(self._configuration_changed)
         output_grid.addWidget(self.energy_unit_combo, 4, 3)
+        output_grid.addWidget(QLabel("复用上次结果（可选）"), 5, 0)
+        self.reuse_run_edit = QLineEdit()
+        self.reuse_run_edit.setPlaceholderText("选择上一次轨道能级图任务文件夹")
+        self.reuse_run_edit.setToolTip(
+            "输入上一次任务文件夹后，可复用相同轨道的 Cube；视角与绘图参数一致时还会复用轨道图片。"
+        )
+        self.reuse_run_edit.textChanged.connect(self._configuration_changed)
+        output_grid.addWidget(self.reuse_run_edit, 5, 1, 1, 2)
+        browse_reuse = QPushButton("选择任务")
+        browse_reuse.clicked.connect(self._browse_reuse_run_dir)
+        output_grid.addWidget(browse_reuse, 5, 3)
         output_grid.setColumnStretch(1, 1)
         output_grid.setColumnStretch(3, 1)
         output_layout.addLayout(output_grid)
@@ -1758,6 +1769,7 @@ class OrbitalDiagramPage(QWidget):
             ),
             "keep_cubes": self.keep_cubes_check.isChecked(),
             "keep_intermediate_files": self.keep_intermediates_check.isChecked(),
+            "reuse_run_dir": self.reuse_run_edit.text().strip(),
             "complete_odd_boundaries": self.odd_boundary_match_check.isChecked(),
             "strict_pair_validation": True,
         }
@@ -1781,6 +1793,17 @@ class OrbitalDiagramPage(QWidget):
         )
         if path:
             self.output_dir_edit.setText(path)
+
+    def _browse_reuse_run_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "选择上一次轨道能级图任务文件夹",
+            self.reuse_run_edit.text().strip()
+            or self.output_dir_edit.text().strip()
+            or str(self.storage_dir),
+        )
+        if path:
+            self.reuse_run_edit.setText(path)
 
     def _validated_inputs(
         self,
@@ -1817,6 +1840,16 @@ class OrbitalDiagramPage(QWidget):
             raise ValueError("请选择结果目录。")
         output_root = Path(output_text).expanduser().resolve()
         output_root.mkdir(parents=True, exist_ok=True)
+        reuse_text = self.reuse_run_edit.text().strip().strip('"')
+        if reuse_text:
+            reuse_root = Path(reuse_text).expanduser()
+            candidates = (
+                [reuse_root]
+                if reuse_root.is_file()
+                else [reuse_root / "records" / "manifest.json", reuse_root / "manifest.json"]
+            )
+            if not any(candidate.is_file() for candidate in candidates):
+                raise ValueError("所选上次任务文件夹中没有任务记录，请重新选择。")
         multi, vmd = self._validated_program_paths()
         settings = self._settings()
         if pair_override is not None:
@@ -2184,6 +2217,7 @@ class OrbitalDiagramPage(QWidget):
             "orbital_stage",
             "viewpoint_required",
             "viewpoint_captured",
+            "reuse_summary",
         }
         display_text = text
         if normalized_kind in {"error", "failed"}:
@@ -2290,6 +2324,8 @@ class OrbitalDiagramPage(QWidget):
             )
         elif kind == "viewpoint_captured":
             self.run_state_label.setText("已保存全部 VMD 参数，正在复用同一视角批量渲染。")
+        elif kind == "reuse_summary" and display_text:
+            self.run_state_label.setText(display_text)
 
     def _result_jobs(self, result: object) -> list[object]:
         for name in ("jobs", "results", "tasks", "pair_results"):
@@ -2560,6 +2596,7 @@ class OrbitalDiagramPage(QWidget):
             self.keep_intermediates_check.setChecked(
                 bool(saved.get("keep_intermediate_files", False))
             )
+            self.reuse_run_edit.setText(str(saved.get("reuse_run_dir") or ""))
             self.odd_boundary_match_check.setChecked(
                 bool(saved.get("complete_odd_boundaries", True))
             )

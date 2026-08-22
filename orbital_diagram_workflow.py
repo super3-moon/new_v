@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import csv
 import hashlib
+import html
 import json
 import locale
 import math
@@ -33,7 +34,7 @@ import orbital_vmd
 
 
 WORKFLOW_ID = "orbital_energy_diagram"
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -127,6 +128,7 @@ SETTING_RETRY_STAGE = {
     # A previous successful run may already have removed its workspace, so
     # enabling this option during resume must rebuild the process artifacts.
     "keep_intermediate_files": STAGE_PARSE,
+    "reuse_run_dir": STAGE_REFERENCE_CUBE,
 }
 
 EventCallback = Callable[[dict], None]
@@ -274,6 +276,65 @@ def _unique_target(path: Path) -> Path:
         number += 1
 
 
+def _resolve_reuse_manifest(value: Path | str) -> Path:
+    """Resolve either a previous task folder or its manifest file."""
+
+    path = Path(value).expanduser().resolve()
+    candidates = [path] if path.is_file() else [
+        path / "records" / "manifest.json",
+        path / "manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise OrbitalDiagramValidationError(
+        "所选上次任务文件夹中没有可读取的任务记录（manifest.json）。"
+    )
+
+
+def _standalone_diagram_html(svg_text: str, title: str) -> str:
+    """Wrap the editable SVG in a self-contained, browser-friendly result."""
+
+    if "<svg" not in svg_text:
+        raise OrbitalDiagramError("生成的 SVG 能级图内容无效，无法创建 HTML 结果。")
+    safe_title = html.escape(title or "Molecular orbital energy diagram")
+    embedded_svg = re.sub(r"<\?xml[^>]*>\s*", "", svg_text, count=1, flags=re.IGNORECASE)
+    embedded_svg = re.sub(
+        r"<!DOCTYPE[^>]*(?:\[[\s\S]*?\]\s*)?>\s*",
+        "",
+        embedded_svg,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return (
+        "<!doctype html>\n"
+        '<html lang="zh-CN"><head><meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+        f"<title>{safe_title}</title>\n"
+        "<style>html,body{margin:0;background:#fff;color:#172033;font-family:"
+        "Segoe UI,Microsoft YaHei,sans-serif}main{box-sizing:border-box;min-height:100vh;"
+        "padding:24px;display:flex;align-items:flex-start;justify-content:center}"
+        "svg{display:block;width:min(100%,1800px);height:auto}</style></head><body><main>\n"
+        f"{embedded_svg}\n</main></body></html>\n"
+    )
+
+
+def _prune_empty_directories(root: Path) -> None:
+    """Remove empty descendants without ever deleting *root* itself."""
+
+    if not root.is_dir():
+        return
+    for directory in sorted(
+        (item for item in root.rglob("*") if item.is_dir()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+
 def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value))
 
@@ -363,6 +424,7 @@ class OrbitalDiagramSettings:
     vmd_timeout_seconds: int = 900
     view_state_paths: dict[str, str] = field(default_factory=dict)
     orbital_selections: list[dict] = field(default_factory=list)
+    reuse_run_dir: str = ""
 
     @classmethod
     def from_value(cls, value: "OrbitalDiagramSettings | Mapping[str, object]") -> "OrbitalDiagramSettings":
@@ -424,6 +486,17 @@ class OrbitalDiagramSettings:
             for item in list(self.orbital_selections or [])
             if isinstance(item, dict)
         ]
+        reuse_text = str(self.reuse_run_dir or "").strip().strip('"')
+        if reuse_text:
+            reuse_manifest = _resolve_reuse_manifest(reuse_text)
+            reuse_root = (
+                reuse_manifest.parent.parent
+                if reuse_manifest.parent.name.casefold() == "records"
+                else reuse_manifest.parent
+            )
+            self.reuse_run_dir = str(reuse_root)
+        else:
+            self.reuse_run_dir = ""
         return self
 
     @property
@@ -463,12 +536,17 @@ class OrbitalDiagramJob:
     cubes: dict[str, str] = field(default_factory=dict)
     cube_status: dict[str, str] = field(default_factory=dict)
     viewpoint_path: str = ""
+    viewpoint_state: dict = field(default_factory=dict)
     vmd_save_state_path: str = ""
     viewpoint_status: str = STATUS_PENDING
     images: dict[str, str] = field(default_factory=dict)
     render_status: dict[str, str] = field(default_factory=dict)
     diagram_path: str = ""
     diagram_svg_path: str = ""
+    diagram_html_path: str = ""
+    reuse_source: str = ""
+    reused_cubes: int = 0
+    reused_images: int = 0
     outputs: list[str] = field(default_factory=list)
     can_retry: list[str] = field(default_factory=list)
 
@@ -494,12 +572,17 @@ class OrbitalDiagramJob:
             "cubes": dict(self.cubes),
             "cube_status": dict(self.cube_status),
             "viewpoint_path": self.viewpoint_path,
+            "viewpoint_state": copy.deepcopy(self.viewpoint_state),
             "vmd_save_state_path": self.vmd_save_state_path,
             "viewpoint_status": self.viewpoint_status,
             "images": dict(self.images),
             "render_status": dict(self.render_status),
             "diagram_path": self.diagram_path,
             "diagram_svg_path": self.diagram_svg_path,
+            "diagram_html_path": self.diagram_html_path,
+            "reuse_source": self.reuse_source,
+            "reused_cubes": self.reused_cubes,
+            "reused_images": self.reused_images,
             "outputs": list(self.outputs),
             "can_retry": list(self.can_retry),
         }
@@ -528,12 +611,17 @@ class OrbitalDiagramJob:
             cubes={str(k): str(v) for k, v in dict(raw.get("cubes") or {}).items()},
             cube_status={str(k): str(v) for k, v in dict(raw.get("cube_status") or {}).items()},
             viewpoint_path=str(raw.get("viewpoint_path") or ""),
+            viewpoint_state=dict(raw.get("viewpoint_state") or {}),
             vmd_save_state_path=str(raw.get("vmd_save_state_path") or ""),
             viewpoint_status=str(raw.get("viewpoint_status") or STATUS_PENDING),
             images={str(k): str(v) for k, v in dict(raw.get("images") or {}).items()},
             render_status={str(k): str(v) for k, v in dict(raw.get("render_status") or {}).items()},
             diagram_path=str(raw.get("diagram_path") or ""),
             diagram_svg_path=str(raw.get("diagram_svg_path") or ""),
+            diagram_html_path=str(raw.get("diagram_html_path") or ""),
+            reuse_source=str(raw.get("reuse_source") or ""),
+            reused_cubes=int(raw.get("reused_cubes") or 0),
+            reused_images=int(raw.get("reused_images") or 0),
             outputs=[str(item) for item in raw.get("outputs", []) or []],
             can_retry=[str(item) for item in raw.get("can_retry", []) or []],
         )
@@ -545,6 +633,7 @@ class OrbitalDiagramPlan:
     created_at: str
     run_dir: Path
     results_dir: Path
+    records_dir: Path
     settings: OrbitalDiagramSettings
     jobs: list[OrbitalDiagramJob]
     status: str = STATUS_PENDING
@@ -554,11 +643,11 @@ class OrbitalDiagramPlan:
 
     @property
     def manifest_path(self) -> Path:
-        return self.run_dir / "manifest.json"
+        return self.records_dir / "manifest.json"
 
     @property
     def summary_path(self) -> Path:
-        return self.run_dir / "summary.csv"
+        return self.records_dir / "summary.csv"
 
     def to_dict(self) -> dict:
         return {
@@ -568,6 +657,7 @@ class OrbitalDiagramPlan:
             "created_at": self.created_at,
             "run_dir": str(self.run_dir),
             "results_dir": str(self.results_dir),
+            "records_dir": str(self.records_dir),
             "status": self.status,
             "settings": self.settings.to_dict(),
             "jobs": [job.to_dict() for job in self.jobs],
@@ -600,7 +690,8 @@ def create_orbital_diagram_plan(
     plan_id = uuid.uuid4().hex[:10]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = root / f"{_clean_part(prefix, 'orbital_diagram')}_{timestamp}_{plan_id[:6]}"
-    results = run_dir / "results"
+    results = run_dir
+    records = run_dir / "records"
     jobs: list[OrbitalDiagramJob] = []
     for index, pair in enumerate(unique.values(), 1):
         label = _clean_part(pair.label or pair.wavefunction_path.stem)
@@ -619,6 +710,7 @@ def create_orbital_diagram_plan(
         created_at=datetime.now().isoformat(timespec="seconds"),
         run_dir=run_dir,
         results_dir=results,
+        records_dir=records,
         settings=normalized,
         jobs=jobs,
     )
@@ -668,7 +760,11 @@ def resume_orbital_diagram_plan(
         raise OrbitalDiagramValidationError(f"无法读取运行记录：{exc}") from exc
     if str((payload.get("workflow") or {}).get("id") or "") != WORKFLOW_ID:
         raise OrbitalDiagramValidationError("运行记录不属于分子轨道能级图流程。")
-    stored = OrbitalDiagramSettings.from_value(payload.get("settings") or {})
+    stored_raw = dict(payload.get("settings") or {})
+    # Cross-task reuse has already been materialized into this run.  A normal
+    # resume must not depend on the older source folder still being present.
+    stored_raw["reuse_run_dir"] = ""
+    stored = OrbitalDiagramSettings.from_value(stored_raw)
     requested = (
         OrbitalDiagramSettings.from_value(settings)
         if settings is not None
@@ -718,6 +814,7 @@ def resume_orbital_diagram_plan(
         # anything, including prior failures.
     run_dir = Path(str(payload.get("run_dir") or manifest.parent)).resolve()
     results_dir = Path(str(payload.get("results_dir") or run_dir / "results")).resolve()
+    records_dir = Path(str(payload.get("records_dir") or manifest.parent)).resolve()
     if "output_location" in changed_settings:
         for job in jobs:
             job.result_dir = (
@@ -730,6 +827,7 @@ def resume_orbital_diagram_plan(
         created_at=str(payload.get("created_at") or datetime.now().isoformat(timespec="seconds")),
         run_dir=run_dir,
         results_dir=results_dir,
+        records_dir=records_dir,
         settings=requested,
         jobs=jobs,
         resume=True,
@@ -758,6 +856,274 @@ class OrbitalDiagramRunner:
         self._active_process: subprocess.Popen[str] | None = None
         self._active_job_position = 0
         self._active_job_total = 1
+        self._digest_cache: dict[str, str] = {}
+        self._reuse_entries: dict[str, Mapping[str, object]] = {}
+        self._reuse_view_states: dict[str, orbital_vmd.VmdViewState] = {}
+        self._reuse_root: Path | None = None
+        self._reuse_payload: Mapping[str, object] | None = None
+        if self.plan.settings.reuse_run_dir:
+            manifest = _resolve_reuse_manifest(self.plan.settings.reuse_run_dir)
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise OrbitalDiagramValidationError(f"无法读取上次任务记录：{exc}") from exc
+            if str((payload.get("workflow") or {}).get("id") or "") != WORKFLOW_ID:
+                raise OrbitalDiagramValidationError("所选文件夹不是分子轨道能级图任务。")
+            self._reuse_payload = payload
+            self._reuse_root = (
+                manifest.parent.parent
+                if manifest.parent.name.casefold() == "records"
+                else manifest.parent
+            )
+
+    def _file_digest(self, path: Path) -> str:
+        resolved = str(path.resolve())
+        cached = self._digest_cache.get(resolved)
+        if cached:
+            return cached
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        value = digest.hexdigest()
+        self._digest_cache[resolved] = value
+        return value
+
+    def _same_wavefunction(self, current: Path, previous: Path) -> bool:
+        if not current.is_file() or not previous.is_file():
+            return False
+        try:
+            if os.path.samefile(current, previous):
+                return True
+        except OSError:
+            pass
+        try:
+            if current.stat().st_size != previous.stat().st_size:
+                return False
+            return self._file_digest(current) == self._file_digest(previous)
+        except OSError:
+            return False
+
+    def _matching_reuse_job(self, job: OrbitalDiagramJob) -> Mapping[str, object] | None:
+        payload = self._reuse_payload
+        if payload is None:
+            return None
+        raw_jobs = payload.get("jobs")
+        if not isinstance(raw_jobs, list):
+            return None
+        for raw in raw_jobs:
+            if not isinstance(raw, Mapping):
+                continue
+            pair = raw.get("pair")
+            if not isinstance(pair, Mapping):
+                continue
+            previous_text = str(pair.get("wavefunction_path") or pair.get("wavefunction") or "")
+            if not previous_text:
+                continue
+            if self._same_wavefunction(job.pair.wavefunction_path, Path(previous_text)):
+                return raw
+        return None
+
+    def _previous_artifact(
+        self,
+        raw_path: object,
+        outputs: Sequence[object],
+        *,
+        fallback_name: str = "",
+    ) -> Path | None:
+        names: list[str] = []
+        text = str(raw_path or "")
+        if text:
+            direct = Path(text)
+            if direct.is_file() and direct.stat().st_size > 64:
+                return direct.resolve()
+            names.append(direct.name)
+        if fallback_name:
+            names.append(fallback_name)
+        for raw in outputs:
+            candidate_text = str(raw or "")
+            if not candidate_text:
+                continue
+            candidate = Path(candidate_text)
+            if candidate.is_file() and candidate.stat().st_size > 64:
+                if not names or candidate.name in names:
+                    return candidate.resolve()
+        if self._reuse_root is not None:
+            for name in dict.fromkeys(item for item in names if item):
+                for candidate in self._reuse_root.rglob(name):
+                    if candidate.is_file() and candidate.stat().st_size > 64:
+                        return candidate.resolve()
+        return None
+
+    def _prepare_previous_reuse(
+        self,
+        job: OrbitalDiagramJob,
+        refs: Sequence[orbital_data.OrbitalRef],
+        reference: orbital_data.OrbitalRef,
+    ) -> None:
+        previous = self._matching_reuse_job(job)
+        if previous is None:
+            return
+        previous_settings = (
+            self._reuse_payload.get("settings")
+            if isinstance(self._reuse_payload, Mapping)
+            else {}
+        )
+        if not isinstance(previous_settings, Mapping):
+            previous_settings = {}
+        if int(previous_settings.get("grid_quality") or 2) != self.plan.settings.grid_quality:
+            self._emit(
+                "reuse_summary",
+                index=job.index,
+                job_id=job.id,
+                message="上次任务的 Cube 精度不同，本次将重新计算。",
+                cubes=0,
+                images=0,
+            )
+            return
+
+        outputs = list(previous.get("outputs") or [])
+        previous_cubes = previous.get("cubes")
+        if not isinstance(previous_cubes, Mapping):
+            previous_cubes = {}
+        reuse_cube_dir = job.work_dir / "reused" / "cubes"
+        all_refs = {_orbital_key(item): item for item in [reference, *refs]}
+        for key, ref in all_refs.items():
+            source = self._previous_artifact(
+                previous_cubes.get(key),
+                outputs,
+                fallback_name=f"orb{int(ref.global_index):06d}.cub",
+            )
+            if source is None:
+                continue
+            target = reuse_cube_dir / f"orb{int(ref.global_index):06d}.cub"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            job.cubes[key] = str(target.resolve())
+            job.cube_status[key] = STATUS_SUCCESS
+            job.reused_cubes += 1
+        reference_key = _orbital_key(reference)
+        if reference_key in job.cubes:
+            job.reference_cube = job.cubes[reference_key]
+
+        previous_state: orbital_vmd.VmdViewState | None = None
+        same_visual_start = _json_hash(
+            {
+                "iso_value": self.plan.settings.iso_value,
+                "style_snapshot": self.plan.settings.style_snapshot,
+            }
+        ) == _json_hash(
+            {
+                "iso_value": previous_settings.get("iso_value"),
+                "style_snapshot": previous_settings.get("style_snapshot"),
+            }
+        )
+        state_payload = previous.get("viewpoint_state")
+        if same_visual_start and isinstance(state_payload, Mapping) and state_payload:
+            try:
+                previous_state = orbital_vmd.VmdViewState.from_dict(state_payload)
+            except orbital_vmd.OrbitalVmdError:
+                previous_state = None
+        if same_visual_start and previous_state is None:
+            state_source = self._previous_artifact(
+                previous.get("viewpoint_path"),
+                outputs,
+                fallback_name=f"{_clean_part(str((previous.get('pair') or {}).get('label') or job.pair.label))}_viewpoint.json",
+            )
+            if state_source is not None:
+                try:
+                    previous_state = orbital_vmd.load_view_state(state_source)
+                except orbital_vmd.OrbitalVmdError:
+                    previous_state = None
+        if previous_state is not None and reference_key in job.cubes:
+            state_target = job.work_dir / "reused" / "viewpoint.json"
+            previous_state.save_json(state_target)
+            job.viewpoint_path = str(state_target.resolve())
+            job.viewpoint_state = previous_state.to_dict()
+            self._reuse_view_states[job.id] = previous_state
+            native_source = self._previous_artifact(
+                previous.get("vmd_save_state_path"),
+                outputs,
+                fallback_name=f"{_clean_part(job.pair.label)}_VMD_final_state.vmd",
+            )
+            if native_source is not None:
+                native_target = job.work_dir / "reused" / "vmd_final_state.vmd"
+                shutil.copy2(native_source, native_target)
+                job.vmd_save_state_path = str(native_target.resolve())
+
+        job.reuse_source = str(self._reuse_root or "")
+        self._reuse_entries[job.id] = previous
+        self._emit(
+            "reuse_summary",
+            index=job.index,
+            job_id=job.id,
+            message=(
+                f"已从上次任务读取 {job.reused_cubes} 个可复用 Cube。"
+                if job.reused_cubes
+                else "已找到上次任务，但所选轨道没有可复用 Cube。"
+            ),
+            cubes=job.reused_cubes,
+            images=0,
+        )
+
+    def _reuse_previous_images(
+        self,
+        job: OrbitalDiagramJob,
+        refs: Sequence[orbital_data.OrbitalRef],
+        state: orbital_vmd.VmdViewState,
+    ) -> None:
+        previous = self._reuse_entries.get(job.id)
+        previous_state = self._reuse_view_states.get(job.id)
+        if previous is None or previous_state is None:
+            return
+        if _json_hash(previous_state.to_dict()) != _json_hash(state.to_dict()):
+            return
+        previous_settings = (
+            self._reuse_payload.get("settings")
+            if isinstance(self._reuse_payload, Mapping)
+            else {}
+        )
+        if not isinstance(previous_settings, Mapping):
+            return
+        current_contract = {
+            "grid_quality": self.plan.settings.grid_quality,
+            "iso_value": self.plan.settings.iso_value,
+            "style_snapshot": self.plan.settings.style_snapshot,
+            "width": self.plan.settings.width,
+            "height": self.plan.settings.height,
+        }
+        previous_contract = {key: previous_settings.get(key) for key in current_contract}
+        if _json_hash(current_contract) != _json_hash(previous_contract):
+            return
+        previous_images = previous.get("images")
+        if not isinstance(previous_images, Mapping):
+            return
+        outputs = list(previous.get("outputs") or [])
+        reuse_image_dir = job.work_dir / "reused" / "rendered"
+        for ref in refs:
+            key = _orbital_key(ref)
+            source = self._previous_artifact(
+                previous_images.get(key),
+                outputs,
+                fallback_name=f"{_orbital_artifact_stem(ref)}.png",
+            )
+            if source is None:
+                continue
+            target = reuse_image_dir / f"{_orbital_artifact_stem(ref)}.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            job.images[key] = str(target.resolve())
+            job.render_status[key] = STATUS_SUCCESS
+            job.reused_images += 1
+        if job.reused_images:
+            self._emit(
+                "reuse_summary",
+                index=job.index,
+                job_id=job.id,
+                message=f"视角与绘图参数一致，已复用 {job.reused_images} 张轨道图片。",
+                cubes=job.reused_cubes,
+                images=job.reused_images,
+            )
 
     def _emit(self, kind: str, **payload: object) -> None:
         if self.event_callback is not None:
@@ -813,7 +1179,7 @@ class OrbitalDiagramRunner:
         with self.plan.summary_path.open("w", encoding="utf-8-sig", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(
-                ["序号", "任务", "计算输出", "波函数", "状态", "失败阶段", "轨道数", "PNG 能级图", "SVG 能级图", "耗时（秒）", "错误"]
+                ["序号", "任务", "计算输出", "波函数", "状态", "失败阶段", "轨道数", "PNG 能级图", "HTML 能级图", "SVG 能级图", "复用 Cube", "复用图片", "耗时（秒）", "错误"]
             )
             for job in self.plan.jobs:
                 writer.writerow(
@@ -826,7 +1192,10 @@ class OrbitalDiagramRunner:
                         job.failed_stage,
                         len(job.orbitals),
                         job.diagram_path,
+                        job.diagram_html_path,
                         job.diagram_svg_path,
+                        job.reused_cubes,
+                        job.reused_images,
                         f"{job.duration_seconds:.3f}",
                         job.error,
                     ]
@@ -839,7 +1208,6 @@ class OrbitalDiagramRunner:
             raise OrbitalDiagramValidationError(f"vmd.exe 路径无效：{self.vmd_exe}")
         self.plan.run_dir.mkdir(parents=True, exist_ok=self.plan.resume)
         self.plan.results_dir.mkdir(parents=True, exist_ok=True)
-        (self.plan.run_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.plan.status = STATUS_RUNNING
         self._write_manifest()
         active_total = (
@@ -917,6 +1285,7 @@ class OrbitalDiagramRunner:
         self._write_manifest()
         if not self.plan.settings.keep_intermediate_files:
             self._discard_success_intermediates()
+        self._prune_empty_output_directories()
         result = {
             "status": self.plan.status,
             "run_dir": str(self.plan.run_dir),
@@ -965,10 +1334,12 @@ class OrbitalDiagramRunner:
             self._prepare_retry_artifacts(job)
             dataset, refs = self._parse_and_resolve(job)
             reference = self._reference_orbital(dataset)
+            self._prepare_previous_reuse(job, refs, reference)
             reference_cube = self._ensure_reference_cube(job, reference)
             view_state = self._ensure_viewpoint(job, reference_cube, dataset)
             self._ensure_orbital_cubes(job, refs)
             self._validate_cubes(job, refs, view_state)
+            self._reuse_previous_images(job, refs, view_state)
             self._render_orbitals(job, refs, view_state)
             self._compose(job, refs, dataset)
             self._collect(job)
@@ -1021,18 +1392,22 @@ class OrbitalDiagramRunner:
         if earliest <= STAGE_ORDER.index(STAGE_VIEWPOINT):
             job.viewpoint_path = ""
             job.viewpoint_status = STATUS_PENDING
+            job.viewpoint_state = {}
             job.images = {}
             job.render_status = {}
             job.diagram_path = ""
             job.diagram_svg_path = ""
+            job.diagram_html_path = ""
         elif earliest <= STAGE_ORDER.index(STAGE_RENDER):
             job.images = {}
             job.render_status = {}
             job.diagram_path = ""
             job.diagram_svg_path = ""
+            job.diagram_html_path = ""
         elif earliest <= STAGE_ORDER.index(STAGE_COMPOSE):
             job.diagram_path = ""
             job.diagram_svg_path = ""
+            job.diagram_html_path = ""
         if earliest <= STAGE_ORDER.index(STAGE_REFERENCE_CUBE):
             job.reference_cube = ""
         if earliest <= STAGE_ORDER.index(STAGE_ORBITAL_CUBES):
@@ -1198,6 +1573,7 @@ class OrbitalDiagramRunner:
                 normalized = job.work_dir / "viewpoint.json"
                 state.save_json(normalized)
                 job.viewpoint_path = str(normalized.resolve())
+                job.viewpoint_state = state.to_dict()
                 job.viewpoint_status = STATUS_SUCCESS
                 return state
 
@@ -1273,6 +1649,7 @@ class OrbitalDiagramRunner:
         normalized = job.work_dir / "viewpoint.json"
         state.save_json(normalized)
         job.viewpoint_path = str(normalized.resolve())
+        job.viewpoint_state = state.to_dict()
         if debug_state.is_file():
             job.vmd_save_state_path = str(debug_state.resolve())
         job.viewpoint_status = STATUS_SUCCESS
@@ -1524,19 +1901,36 @@ class OrbitalDiagramRunner:
         self._set_stage(job, STAGE_COLLECT, "正在整理能级图、轨道数据、图片与日志")
         job.result_dir.mkdir(parents=True, exist_ok=True)
         label = _clean_part(job.pair.label)
+
+        # The two files users open most often stay at the task-folder root.
         diagram_target = _unique_target(job.result_dir / f"{label}_MO_energy_diagram.png")
         shutil.copy2(job.diagram_path, diagram_target)
         job.diagram_path = str(diagram_target.resolve())
         job.outputs.append(job.diagram_path)
         diagram_svg_source = Path(job.diagram_svg_path) if job.diagram_svg_path else Path()
         if job.diagram_svg_path and diagram_svg_source.is_file():
+            diagram_support_dir = job.result_dir / "diagrams" / label
+            diagram_support_dir.mkdir(parents=True, exist_ok=True)
             diagram_svg_target = _unique_target(
-                job.result_dir / f"{label}_MO_energy_diagram.svg"
+                diagram_support_dir / f"{label}_MO_energy_diagram.svg"
             )
             shutil.copy2(diagram_svg_source, diagram_svg_target)
             job.diagram_svg_path = str(diagram_svg_target.resolve())
             job.outputs.append(job.diagram_svg_path)
-        image_dir = job.result_dir / f"{label}_orbitals"
+            html_target = _unique_target(
+                job.result_dir / f"{label}_MO_energy_diagram.html"
+            )
+            _write_text_atomic(
+                html_target,
+                _standalone_diagram_html(
+                    diagram_svg_target.read_text(encoding="utf-8"),
+                    self.plan.settings.title,
+                ),
+            )
+            job.diagram_html_path = str(html_target.resolve())
+            job.outputs.append(job.diagram_html_path)
+
+        image_dir = job.result_dir / "orbitals" / label
         image_dir.mkdir(parents=True, exist_ok=True)
         collected_images: dict[str, str] = {}
         for key, raw in job.images.items():
@@ -1546,7 +1940,10 @@ class OrbitalDiagramRunner:
                 shutil.copy2(source, target)
                 collected_images[key] = str(target.resolve())
                 job.outputs.append(str(target.resolve()))
-        data_target = _unique_target(job.result_dir / f"{label}_orbitals.csv")
+        job.images = collected_images
+        data_dir = job.result_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        data_target = _unique_target(data_dir / f"{label}_orbitals.csv")
         with data_target.open("w", encoding="utf-8-sig", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(["spin", "label", "channel_index", "multiwfn_index", "occupation", "energy_hartree", "energy_ev", "image"])
@@ -1566,35 +1963,46 @@ class OrbitalDiagramRunner:
                 )
         job.outputs.append(str(data_target.resolve()))
         if self.plan.settings.keep_intermediate_files:
+            process_dir = job.result_dir / "process" / label
             view_source = Path(job.viewpoint_path)
             if view_source.is_file():
-                view_target = _unique_target(job.result_dir / f"{label}_viewpoint.json")
+                process_dir.mkdir(parents=True, exist_ok=True)
+                view_target = _unique_target(process_dir / f"{label}_viewpoint.json")
                 shutil.copy2(view_source, view_target)
+                job.viewpoint_path = str(view_target.resolve())
                 job.outputs.append(str(view_target.resolve()))
             save_state_source = (
                 Path(job.vmd_save_state_path) if job.vmd_save_state_path else Path()
             )
             if job.vmd_save_state_path and save_state_source.is_file():
+                process_dir.mkdir(parents=True, exist_ok=True)
                 save_state_target = _unique_target(
-                    job.result_dir / f"{label}_VMD_final_state.vmd"
+                    process_dir / f"{label}_VMD_final_state.vmd"
                 )
                 shutil.copy2(save_state_source, save_state_target)
+                job.vmd_save_state_path = str(save_state_target.resolve())
                 job.outputs.append(str(save_state_target.resolve()))
-            logs = self.plan.run_dir / "logs" / label
+            logs = job.result_dir / "logs" / label
             for source in job.work_dir.rglob("*.log"):
                 target = _unique_target(logs / source.name)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 job.outputs.append(str(target.resolve()))
         if self.plan.settings.keep_cubes:
-            cube_dir = job.result_dir / f"{label}_cubes"
+            cube_dir = job.result_dir / "cubes" / label
             cube_dir.mkdir(parents=True, exist_ok=True)
-            for raw in sorted(set(job.cubes.values())):
+            collected_cubes: dict[str, str] = {}
+            for key, raw in job.cubes.items():
                 source = Path(raw)
                 if source.is_file():
                     target = _unique_target(cube_dir / source.name)
                     shutil.copy2(source, target)
-                    job.outputs.append(str(target.resolve()))
+                    collected_cubes[key] = str(target.resolve())
+                    job.outputs.append(collected_cubes[key])
+            job.cubes = collected_cubes
+            reference_key = _orbital_key(job.reference_orbital)
+            if reference_key in collected_cubes:
+                job.reference_cube = collected_cubes[reference_key]
 
     @staticmethod
     def _discard_working_cubes(job: OrbitalDiagramJob) -> None:
@@ -1640,6 +2048,19 @@ class OrbitalDiagramRunner:
                     wavefunction_path=str(job.pair.wavefunction_path),
                     message=f"部分过程文件未能清理：{exc}",
                 )
+
+    def _prune_empty_output_directories(self) -> None:
+        _prune_empty_directories(self.plan.run_dir)
+        if self.plan.settings.output_location != "input_directory":
+            return
+        for job in self.plan.jobs:
+            for name in ("diagrams", "orbitals", "data", "cubes", "process", "logs"):
+                category = job.result_dir / name
+                _prune_empty_directories(category)
+                try:
+                    category.rmdir()
+                except OSError:
+                    pass
 
     def _run_process(
         self,

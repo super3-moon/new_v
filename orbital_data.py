@@ -2028,14 +2028,15 @@ def total_electron_count(dataset: OrbitalDataset) -> int | None:
 def complete_odd_electron_boundary_pairs(
     dataset: OrbitalDataset,
     references: Iterable[OrbitalRef],
+    *,
+    energy_tolerance_ev: float = 0.012,
 ) -> list[OrbitalRef]:
-    """Complete only the two index boundaries of an odd-electron selection.
+    """Complete energy-degenerate partners at the two selection boundaries.
 
-    A frontier expression is resolved independently in the alpha and beta
-    channels.  For an unrestricted odd-electron system this can leave the
-    same channel index selected in only one spin channel at the lower or upper
-    edge.  This helper adds the opposite-spin orbital with that exact channel
-    index at either edge only.  Interior orbitals are deliberately untouched
+    Alpha and beta frontier indices do not necessarily refer to the same
+    energy in an odd-electron calculation.  Therefore an opposite-spin orbital
+    is added only when its energy matches the selected lowest or highest level
+    within ``energy_tolerance_ev``.  Interior levels are deliberately untouched
     and an explicit single-spin selection remains single-spin.
     """
 
@@ -2055,24 +2056,44 @@ def complete_odd_electron_boundary_pairs(
     if selected_spins != {SpinChannel.ALPHA, SpinChannel.BETA}:
         return refs
 
+    tolerance = max(0.0, float(energy_tolerance_ev))
     selected: dict[tuple[SpinChannel, int], OrbitalRef] = {
         (ref.spin, ref.channel_index): ref for ref in refs
     }
-    orbital_lookup = {
-        (orbital.spin, orbital.channel_index): orbital
-        for orbital in dataset.orbitals
-        if orbital.spin in {SpinChannel.ALPHA, SpinChannel.BETA}
+    boundary_refs = {
+        min(refs, key=lambda ref: (ref.energy_ev, ref.channel_index)),
+        max(refs, key=lambda ref: (ref.energy_ev, -ref.channel_index)),
     }
-    boundary_indices = {
-        min(ref.channel_index for ref in refs),
-        max(ref.channel_index for ref in refs),
-    }
-    for channel_index in boundary_indices:
-        for spin in (SpinChannel.ALPHA, SpinChannel.BETA):
-            key = (spin, channel_index)
-            partner = orbital_lookup.get(key)
-            if partner is not None:
-                selected.setdefault(key, _orbital_ref(dataset, partner))
+    for boundary in boundary_refs:
+        opposite = (
+            SpinChannel.BETA
+            if boundary.spin == SpinChannel.ALPHA
+            else SpinChannel.ALPHA
+        )
+        if any(
+            ref.spin == opposite
+            and abs(ref.energy_ev - boundary.energy_ev) <= tolerance
+            for ref in selected.values()
+        ):
+            continue
+        candidates = [
+            orbital
+            for orbital in dataset.orbitals
+            if orbital.spin == opposite
+            and abs(orbital.energy_hartree * HARTREE_TO_EV - boundary.energy_ev)
+            <= tolerance
+        ]
+        if not candidates:
+            continue
+        partner = min(
+            candidates,
+            key=lambda orbital: (
+                abs(orbital.energy_hartree * HARTREE_TO_EV - boundary.energy_ev),
+                orbital.channel_index,
+            ),
+        )
+        key = (partner.spin, partner.channel_index)
+        selected.setdefault(key, _orbital_ref(dataset, partner))
 
     spin_order = {
         SpinChannel.SPATIAL: 0,

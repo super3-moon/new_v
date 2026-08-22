@@ -346,11 +346,24 @@ def build_diagram_layout(
         }
         for channel in channels:
             items = by_channel[channel]
+            # Long vertical detours use lanes nearest the energy axis.  This
+            # small ordering rule prevents them from cutting through the short
+            # horizontal connector of an adjacent level while preserving the
+            # existing dimensions and publication layout.
+            lane_order = sorted(
+                items,
+                key=lambda orbital: (
+                    abs(image_y_by_key[orbital.key] - level_y_by_key[orbital.key]),
+                    image_y_by_key[orbital.key],
+                    orbital.key,
+                ),
+            )
+            lane_rank = {item.key: rank for rank, item in enumerate(lane_order, 1)}
             image_x, line, header, side = channel_geometry[channel]
             header_x = 365.0 if side == "left" else LOGICAL_WIDTH - 365.0
             headers.append((header, header_x, 36.0 if not show_title else 78.0))
             lane_span = 70.0
-            for index, item in enumerate(items):
+            for item in items:
                 center_y = image_y_by_key[item.key]
                 image_box = QRectF(
                     image_x,
@@ -360,7 +373,7 @@ def build_diagram_layout(
                 )
                 image_rect = _fit_rect(image_box, image_aspect)
                 level_y = level_y_by_key[item.key]
-                fraction = (index + 1) / (len(items) + 1)
+                fraction = lane_rank[item.key] / (len(items) + 1)
                 if side == "left":
                     lane_x = image_box.right() + 18.0 + lane_span * fraction
                     line_outer, line_inner = line
@@ -400,7 +413,16 @@ def build_diagram_layout(
         line = (565.0, 785.0)
         header = {"alpha": "α MOs", "beta": "β MOs"}.get(channel, "MOs")
         headers.append((header, 500.0, 36.0 if not show_title else 78.0))
-        for index, item in enumerate(items):
+        lane_order = sorted(
+            items,
+            key=lambda orbital: (
+                abs(image_y_by_key[orbital.key] - level_y_by_key[orbital.key]),
+                image_y_by_key[orbital.key],
+                orbital.key,
+            ),
+        )
+        lane_rank = {item.key: rank for rank, item in enumerate(lane_order, 1)}
+        for item in items:
             center_y = image_y_by_key[item.key]
             image_box = QRectF(
                 image_x,
@@ -410,7 +432,7 @@ def build_diagram_layout(
             )
             image_rect = _fit_rect(image_box, image_aspect)
             level_y = level_y_by_key[item.key]
-            lane_x = image_box.right() + 30.0 + index * 10.0
+            lane_x = image_box.right() + 30.0 + lane_rank[item.key] * 10.0
             placements.append(
                 OrbitalPlacement(
                     key=item.key,

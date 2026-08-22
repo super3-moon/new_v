@@ -104,6 +104,66 @@ class OrbitalDiagramRendererTests(unittest.TestCase):
             self.assertIn("-5.56 eV", svg)
             self.assertNotIn("rounded", svg.casefold())
 
+    def test_connector_lanes_do_not_cross_for_compressed_energy_ranges(self) -> None:
+        energies = {
+            "alpha": [-8.69817, -7.79104, -7.14975, -7.01730, -1.25387, -1.21564],
+            "beta": [-8.70635, -8.69817, -7.14975, -7.01730, -1.25387, -1.21564],
+        }
+
+        def proper_cross(first, second) -> bool:
+            a, b = first
+            c, d = second
+            first_horizontal = abs(a.y() - b.y()) < 1.0e-6
+            second_horizontal = abs(c.y() - d.y()) < 1.0e-6
+            if first_horizontal == second_horizontal:
+                return False
+            horizontal = (a, b) if first_horizontal else (c, d)
+            vertical = (c, d) if first_horizontal else (a, b)
+            x = vertical[0].x()
+            y = horizontal[0].y()
+            epsilon = 1.0e-6
+            return (
+                min(horizontal[0].x(), horizontal[1].x()) + epsilon
+                < x
+                < max(horizontal[0].x(), horizontal[1].x()) - epsilon
+                and min(vertical[0].y(), vertical[1].y()) + epsilon
+                < y
+                < max(vertical[0].y(), vertical[1].y()) - epsilon
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            values = []
+            for spin, channel_energies in energies.items():
+                for index, energy in enumerate(channel_energies, 1):
+                    path = root / f"{spin}_{index}.png"
+                    Image.new("RGB", (640, 360), "white").save(path)
+                    values.append(
+                        {
+                            "key": f"{spin}:{index}",
+                            "spin": spin,
+                            "label": f"{spin}-{index}",
+                            "energy": energy,
+                            "occupation": 1.0,
+                            "image_path": path,
+                        }
+                    )
+            layout = renderer.build_diagram_layout(values, image_aspect=640 / 360)
+            for spin in energies:
+                placements = [item for item in layout.placements if item.spin == spin]
+                for index, first in enumerate(placements):
+                    first_segments = list(zip(first.connector, first.connector[1:]))
+                    for second in placements[index + 1 :]:
+                        second_segments = list(zip(second.connector, second.connector[1:]))
+                        self.assertFalse(
+                            any(
+                                proper_cross(left, right)
+                                for left in first_segments
+                                for right in second_segments
+                            ),
+                            f"{first.key} and {second.key} connectors cross",
+                        )
+
 
 if __name__ == "__main__":
     unittest.main()
