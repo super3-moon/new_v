@@ -1231,6 +1231,7 @@ class AutomaticWorkflowRunner:
             reader.start()
             started = time.monotonic()
             next_window_check = started
+            vmd_window_restored = False
             next_heartbeat = started
             stream_finished = False
             reason = ""
@@ -1246,10 +1247,11 @@ class AutomaticWorkflowRunner:
                     now = time.monotonic()
                     if (
                         show_window
+                        and not vmd_window_restored
                         and now >= next_window_check
                         and now - started <= 20.0
                     ):
-                        orbital_vmd.restore_vmd_display_window(
+                        vmd_window_restored = orbital_vmd.restore_vmd_display_window(
                             process.pid,
                             excluded_handles=existing_vmd_windows,
                             width=INTERACTIVE_VMD_WINDOW[0],
