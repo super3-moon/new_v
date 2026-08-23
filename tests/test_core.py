@@ -276,6 +276,50 @@ mol addrep top
         self.assertLess(max(len(line) for line in turbo_cmd.splitlines()), 8191)
         self.assertNotIn('> "%TCL_FILE%" (', turbo_cmd)
 
+    def test_article_443_esp_presets_match_bundled_vmd_scripts(self) -> None:
+        e1 = core.STYLE_BY_ID["esp_e1_bwr_glossy"]
+        self.assertEqual(e1["material"], "EdgyGlass")
+        self.assertEqual((e1["color_scale_min"], e1["color_scale_max"]), (-0.03, 0.03))
+        e1_tcl = core.build_vmd_tcl(e1, e1["rep0_commands"])
+        for command in (
+            "mol modstyle 0 top CPK 1.000000 0.300000 22.000000 22.000000",
+            "material change transmode EdgyGlass 1.000000",
+            "material change specular EdgyGlass 0.150000",
+            "material change shininess EdgyGlass 0.950000",
+            "material change opacity EdgyGlass 0.700000",
+            "material change outlinewidth EdgyGlass 0.900000",
+            "material change outline EdgyGlass 0.500000",
+        ):
+            self.assertIn(command, e1_tcl)
+        self.assertNotIn("display distance -8.0", e1_tcl)
+
+        e4 = core.STYLE_BY_ID["esp_e4_turbo_edgyglass_443"]
+        self.assertEqual((e4["color_scale_min"], e4["color_scale_max"]), (-0.06, 0.06))
+        e4_tcl = core.build_vmd_tcl(e4, e4["rep0_commands"])
+        for command in (
+            "display projection Orthographic",
+            "material change outline EdgyGlass 0.590000",
+            "material change outlinewidth EdgyGlass 0.340000",
+            "material change opacity EdgyGlass 0.730000",
+            "material change shininess EdgyGlass 0.800000",
+            "material change diffuse EdgyGlass 0.800000",
+            "material change specular EdgyGlass 0.250000",
+        ):
+            self.assertIn(command, e4_tcl)
+        self.assertNotIn("display height 10", e4_tcl)
+
+        e5 = core.STYLE_BY_ID["esp_e5_bwr_diffuse"]
+        self.assertEqual(e5["material"], "GlassBubble")
+        e5_tcl = core.build_vmd_tcl(e5, e5["rep0_commands"])
+        for command in (
+            "material change outline GlassBubble 0.900000",
+            "material change opacity GlassBubble 0.260000",
+            "material change diffuse GlassBubble 0.700000",
+        ):
+            self.assertIn(command, e5_tcl)
+        self.assertNotIn("material change diffuse Diffuse", e5_tcl)
+        self.assertNotIn("display distance -8.0", e5_tcl)
+
     def test_esp_pair_detection_and_cube_grid_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

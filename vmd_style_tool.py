@@ -385,19 +385,35 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
     _esp_style(
         id="esp_e1_bwr_glossy",
         code="E1",
-        name="E1 ESP · BWR Glossy",
+        name="E1 ESP · 443 Default",
         image="04_isosurface_iso_tachyon.png",
-        material="Glossy",
+        material="EdgyGlass",
         color_scale_method="BWR",
         color_scale_min=-0.03,
         color_scale_max=0.03,
-        commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + GLOSSY_DEFAULT,
+        preserve_vmd_autofit=True,
+        rep0_commands=[
+            "mol modstyle 0 top CPK 1.000000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
+        ],
+        commands=BASE_VIEW + [
+            "color scale method BWR",
+            "light 2 on",
+            "light 3 on",
+            "material change transmode EdgyGlass 1.000000",
+            "material change specular EdgyGlass 0.150000",
+            "material change shininess EdgyGlass 0.950000",
+            "material change opacity EdgyGlass 0.700000",
+            "material change outlinewidth EdgyGlass 0.900000",
+            "material change outline EdgyGlass 0.500000",
+        ],
         sources=[
             "Multiwfn examples/drawESP/ESPiso.vmd",
             "https://www.umsyar.com/443",
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node124.html",
         ],
-        notes="电子密度等值面（默认 0.001 a.u.）映射 ESP；BWR，势能范围 -0.03 至 +0.03 a.u.。",
+        notes="文章 443 与 Multiwfn ESPiso.vmd 的单分子默认样式；电子密度 0.001 a.u. 等值面映射 ESP，BWR，范围 -0.03 至 +0.03 a.u.。",
     ),
     _esp_style(
         id="esp_e2_bwr_translucent",
@@ -448,6 +464,12 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
         color_scale_method="Turbo",
         color_scale_min=-0.06,
         color_scale_max=0.06,
+        preserve_vmd_autofit=True,
+        rep0_commands=[
+            "mol modstyle 0 top CPK 1.000000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
+        ],
         commands=BASE_VIEW + [
             "display projection Orthographic",
             "material change outline EdgyGlass 0.590000",
@@ -463,19 +485,31 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
     _esp_style(
         id="esp_e5_bwr_diffuse",
         code="E5",
-        name="E5 ESP · BWR Diffuse",
+        name="E5 ESP · BWR GlassBubble",
         image="03_iso2_overlap_cube.png",
-        material="Diffuse",
+        material="GlassBubble",
         color_scale_method="BWR",
         color_scale_min=-0.03,
         color_scale_max=0.03,
-        commands=BASE_VIEW + ["color scale method BWR", "light 2 on", "light 3 on"] + DIFFUSE_DEFAULT,
-        sources=[
-            "Multiwfn examples/drawESP/ESPiso.vmd",
-            "https://www.umsyar.com/483",
-            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
+        preserve_vmd_autofit=True,
+        rep0_commands=[
+            "mol modstyle 0 top CPK 1.000000 0.300000 22.000000 22.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top Opaque",
         ],
-        notes="BWR 映射配 VMD 1.9.3 Diffuse 默认参数，形成无高光的哑光等值面。",
+        commands=BASE_VIEW + [
+            "color scale method BWR",
+            "light 2 on",
+            "light 3 on",
+            "material change outline GlassBubble 0.900000",
+            "material change opacity GlassBubble 0.260000",
+            "material change diffuse GlassBubble 0.700000",
+        ],
+        sources=[
+            "Multiwfn examples/drawESP/ESPiso2.vmd",
+            "https://www.umsyar.com/443",
+        ],
+        notes="Multiwfn ESPiso2.vmd 的 GlassBubble 参数；BWR，-0.03 至 +0.03 a.u.，适合透明表面或重叠观察。",
     ),
     _esp_style(
         id="esp_e7_bwr_wireframe",
@@ -572,6 +606,7 @@ def _style_signature(style: dict) -> tuple:
         float(style.get("color_scale_min", 0.0)),
         float(style.get("color_scale_max", 0.0)),
         tuple(style["commands"]),
+        tuple(style.get("rep0_commands") or []),
     )
 
 
@@ -2727,8 +2762,9 @@ def build_vmd_tcl(
         )
         a(f"mol modcolor 2 top {neg_color_expr}")
         a("mol modmaterial 2 top $mater")
-    a("display distance -8.0")
-    a("display height 10")
+    if not bool(style.get("preserve_vmd_autofit")):
+        a("display distance -8.0")
+        a("display height 10")
     a("")
     a("menu main on")
     a("menu graphics on")
