@@ -119,6 +119,16 @@ class AutomaticWorkflowTests(unittest.TestCase):
         self.assertTrue(tcl.rstrip().endswith("quit"))
         self.assertNotIn("menu render on", tcl)
 
+    def test_esp_final_render_uses_external_tachyon_without_changing_orbital_default(self) -> None:
+        source = Path("automatic_workflows.py").read_text(encoding="utf-8")
+        self.assertIn('scene_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.dat"', source)
+        self.assertIn('renderer="Tachyon"', source)
+        self.assertIn("restore_exact_color_slots=True", source)
+        self.assertEqual(
+            orbital_vmd.build_batch_render_tcl.__kwdefaults__["renderer"],
+            "TachyonInternal",
+        )
+
     def test_multiwfn_esp_reuses_density_cube_grid(self) -> None:
         self.assertIn("\n12\n8\ndensity.cub\n2\n0\nq\n", automation.ESP_STDIN_SEQUENCE)
 

@@ -955,21 +955,23 @@ class AutomaticWorkflowRunner:
         state = self._capture_vmd_view(job)
         self._emit_job_progress(job, 89.0, "正在使用 Tachyon 渲染最终图片")
         script_path = job.work_dir / "automatic_render.vmd"
-        native_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.tga"
-        native_output = job.work_dir / native_name
+        scene_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.dat"
+        scene_output = job.work_dir / scene_name
+        native_name = f"{scene_name}.bmp"
         render_script = orbital_vmd.build_batch_render_tcl(
             job.density_cube,
-            native_output,
+            scene_output,
             state,
             width=int(self.plan.settings["width"]),
             height=int(self.plan.settings["height"]),
-            renderer="TachyonInternal",
+            renderer="Tachyon",
             native_state_path=(
                 job.vmd_save_state_path if job.vmd_save_state_path else None
             ),
             reference_cube_path=(
                 job.density_cube if job.vmd_save_state_path else None
             ),
+            restore_exact_color_slots=True,
         )
         _write_text_atomic(script_path, render_script)
         marker = time.time_ns()

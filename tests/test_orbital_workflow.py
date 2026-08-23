@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import sys
 import tempfile
@@ -695,6 +696,35 @@ class OrbitalVmdTests(unittest.TestCase):
         self.assertIn('renderer: str = "TachyonInternal"', source)
         self.assertIn("render {renderer}", source)
         self.assertIn("source $MO_NATIVE_STATE", source)
+
+    def test_external_tachyon_uses_scene_file_and_preserves_exact_palette(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cube = self._cube(root / "esp.cub")
+            state = dataclasses.replace(
+                self._state(cube),
+                colors=(orbital_vmd.VmdColor(0, (0.2, 0.3, 0.4), "blue"),),
+            ).validate()
+            script = orbital_vmd.build_batch_render_tcl(
+                cube,
+                root / "esp.dat",
+                state,
+                renderer="Tachyon",
+                restore_exact_color_slots=True,
+            )
+            self.assertIn("render Tachyon $MO_OUTPUT", script)
+            self.assertIn("exec $MO_TACHYON -aasamples", script)
+            self.assertIn("tachyon_WIN32.exe", script)
+            self.assertIn(
+                orbital_vmd._tcl_hex_expression(
+                    Path(str(root / "esp.dat") + ".bmp").resolve()
+                ),
+                script,
+            )
+            self.assertGreater(
+                script.rfind("color change rgb 0"),
+                script.rfind("color scale colors $MO_SCALE_NAME"),
+            )
 
     def test_batch_render_fits_requested_box_to_captured_aspect(self) -> None:
         self.assertEqual(
