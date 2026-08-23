@@ -1566,16 +1566,24 @@ def _tcl_color_scale(values: Sequence[object]) -> str:
 
 
 def _restore_global_scene_tcl(
-    state: VmdViewState, *, width: int, height: int
+    state: VmdViewState,
+    *,
+    width: int,
+    height: int,
+    restore_exact_color_slots: bool = False,
 ) -> list[str]:
     """Replay normalized global scene data omitted by VMD 1.9.3 save_state."""
 
     lines: list[str] = []
-    for color in state.colors:
-        lines.append(
+    color_lines = [
+        (
             f"color change rgb {color.index} "
             + " ".join(_format_number(value) for value in color.rgb)
         )
+        for color in state.colors
+    ]
+    if not restore_exact_color_slots:
+        lines.extend(color_lines)
     for entry in state.color_categories:
         lines.extend(
             [
@@ -1605,6 +1613,11 @@ def _restore_global_scene_tcl(
             f"color scale max {_format_number(state.color_scale_max)}",
         ]
     )
+    if restore_exact_color_slots:
+        # VMD 1.9.3 has no native Turbo method.  The ESP workflow therefore
+        # captures its 1024 generated color slots.  Defining a scale method
+        # recalculates those slots, so restore the confirmed RGB table last.
+        lines.extend(color_lines)
     for material in state.materials:
         lines.extend(
             [
@@ -1651,20 +1664,41 @@ def _restore_global_scene_tcl(
 def _render_tail_tcl(
     state: VmdViewState, *, output: Path, renderer: str
 ) -> list[str]:
-    return [
+    image_output = Path(str(output) + ".bmp") if renderer == "Tachyon" else output
+    lines = [
         f"set MO_OUTPUT {_tcl_hex_expression(output)}",
+        f"set MO_RENDER_IMAGE {_tcl_hex_expression(image_output)}",
         "file mkdir [file dirname $MO_OUTPUT]",
         "catch {file delete -force $MO_OUTPUT}",
+        "if {$MO_RENDER_IMAGE ne $MO_OUTPUT} { catch {file delete -force $MO_RENDER_IMAGE} }",
         "display update",
         f"render aasamples {renderer} {state.renderer_aa_samples}",
         f"render aosamples {renderer} {state.renderer_ao_samples}",
-        f"render {renderer} $MO_OUTPUT",
-        "if {![file isfile $MO_OUTPUT] || [file size $MO_OUTPUT] < 64} {",
+    ]
+    if renderer == "Tachyon":
+        lines.extend(
+            [
+                'set MO_TACHYON [file join [file dirname [info nameofexecutable]] "tachyon_WIN32.exe"]',
+                "if {![file executable $MO_TACHYON]} { error \"VMD Tachyon executable is missing\" }",
+                'render Tachyon $MO_OUTPUT ""',
+                (
+                    f"exec $MO_TACHYON -aasamples {state.renderer_aa_samples} "
+                    "$MO_OUTPUT -format BMP -o $MO_RENDER_IMAGE"
+                ),
+            ]
+        )
+    else:
+        lines.append(f"render {renderer} $MO_OUTPUT")
+    lines.extend(
+        [
+        "if {![file isfile $MO_RENDER_IMAGE] || [file size $MO_RENDER_IMAGE] < 64} {",
         "    error \"Tachyon did not create a valid-size output file\"",
         "}",
         "puts \"MolecularStudio: orbital render finished\"",
         "quit",
-    ]
+        ]
+    )
+    return lines
 
 
 def _restore_native_state_tcl(
@@ -1677,6 +1711,7 @@ def _restore_native_state_tcl(
     *,
     native_state_path: Path | str,
     reference_cube_path: Path | str,
+    restore_exact_color_slots: bool = False,
 ) -> list[str]:
     lines = [
         "proc _mo_unhex {value} { return [encoding convertfrom utf-8 [binary format H* $value]] }",
@@ -1691,14 +1726,26 @@ def _restore_native_state_tcl(
         # representations, labels, macros and viewpoints, but omits several
         # global display/light fields.  Overlay the validated snapshot only
         # for those globals; native molecule state remains authoritative.
-        *_restore_global_scene_tcl(state, width=width, height=height),
+        *_restore_global_scene_tcl(
+            state,
+            width=width,
+            height=height,
+            restore_exact_color_slots=restore_exact_color_slots,
+        ),
         *_render_tail_tcl(state, output=output, renderer=renderer),
     ]
     return lines
 
 
 def _restore_state_tcl(
-    state: VmdViewState, cube: Path, output: Path, width: int, height: int, renderer: str
+    state: VmdViewState,
+    cube: Path,
+    output: Path,
+    width: int,
+    height: int,
+    renderer: str,
+    *,
+    restore_exact_color_slots: bool = False,
 ) -> list[str]:
     lines = [
         "proc _mo_unhex {value} { return [encoding convertfrom utf-8 [binary format H* $value]] }",
@@ -1711,11 +1758,15 @@ def _restore_state_tcl(
         "set MO_MOL [molinfo top]",
     ]
 
-    for color in state.colors:
-        lines.append(
+    color_lines = [
+        (
             f"color change rgb {color.index} "
             + " ".join(_format_number(value) for value in color.rgb)
         )
+        for color in state.colors
+    ]
+    if not restore_exact_color_slots:
+        lines.extend(color_lines)
     for entry in state.color_categories:
         lines.extend(
             [
@@ -1746,6 +1797,8 @@ def _restore_state_tcl(
             f"color scale max {_format_number(state.color_scale_max)}",
         ]
     )
+    if restore_exact_color_slots:
+        lines.extend(color_lines)
 
     for material in state.materials:
         lines.extend(
@@ -1849,17 +1902,9 @@ def _restore_state_tcl(
             "molinfo $MO_MOL set {center_matrix rotate_matrix scale_matrix global_matrix} "
             + "[list " + " ".join(matrix_variables) + "]",
             "mol top $MO_MOL",
-            "display update",
-            f"render aasamples {renderer} {state.renderer_aa_samples}",
-            f"render aosamples {renderer} {state.renderer_ao_samples}",
-            f"render {renderer} $MO_OUTPUT",
-            "if {![file isfile $MO_OUTPUT] || [file size $MO_OUTPUT] < 64} {",
-            "    error \"Tachyon did not create a valid-size output file\"",
-            "}",
-            "puts \"MolecularStudio: orbital render finished\"",
-            "quit",
         ]
     )
+    lines.extend(_render_tail_tcl(state, output=output, renderer=renderer))
     return lines
 
 
@@ -1873,6 +1918,7 @@ def build_batch_render_tcl(
     renderer: str = "TachyonInternal",
     native_state_path: Path | str | None = None,
     reference_cube_path: Path | str | None = None,
+    restore_exact_color_slots: bool = False,
 ) -> str:
     """Build a headless VMD Tcl script that replays a confirmed scene.
 
@@ -1886,8 +1932,6 @@ def build_batch_render_tcl(
     output = Path(output_tga).expanduser().resolve()
     if not cube.is_file():
         raise OrbitalVmdValidationError(f"Orbital Cube does not exist: {cube}")
-    if output.suffix.lower() != ".tga":
-        raise OrbitalVmdValidationError("VMD 1.9.3 Tachyon output must use a .tga path.")
     state = _state_from_value(state_or_path)
     geometry = cube_geometry_fingerprint(cube)
     if geometry != state.geometry_fingerprint:
@@ -1896,6 +1940,11 @@ def build_batch_render_tcl(
         )
     if renderer not in {"TachyonInternal", "Tachyon"}:
         raise OrbitalVmdValidationError("Only TachyonInternal or Tachyon is allowed.")
+    required_suffix = ".dat" if renderer == "Tachyon" else ".tga"
+    if output.suffix.lower() != required_suffix:
+        raise OrbitalVmdValidationError(
+            f"VMD 1.9.3 {renderer} output must use a {required_suffix} path."
+        )
     render_width, render_height = resolve_render_dimensions(
         state.viewport, width=width, height=height
     )
@@ -1913,10 +1962,17 @@ def build_batch_render_tcl(
             renderer,
             native_state_path=native_state_path,
             reference_cube_path=reference_cube_path,
+            restore_exact_color_slots=restore_exact_color_slots,
         )
     else:
         restore_lines = _restore_state_tcl(
-            state, cube, output, render_width, render_height, renderer
+            state,
+            cube,
+            output,
+            render_width,
+            render_height,
+            renderer,
+            restore_exact_color_slots=restore_exact_color_slots,
         )
     lines = [
         "# Generated by orbital_vmd.py from a confirmed VMD scene.",

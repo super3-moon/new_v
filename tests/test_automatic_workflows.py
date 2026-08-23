@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import automatic_workflows as automation
 import orbital_vmd
@@ -118,6 +119,16 @@ class AutomaticWorkflowTests(unittest.TestCase):
         self.assertTrue(tcl.rstrip().endswith("quit"))
         self.assertNotIn("menu render on", tcl)
 
+    def test_esp_final_render_uses_external_tachyon_without_changing_orbital_default(self) -> None:
+        source = Path("automatic_workflows.py").read_text(encoding="utf-8")
+        self.assertIn('scene_name = f"{_clean_file_part(job.input_path.stem)}_ESP_render.dat"', source)
+        self.assertIn('renderer="Tachyon"', source)
+        self.assertIn("restore_exact_color_slots=True", source)
+        self.assertEqual(
+            orbital_vmd.build_batch_render_tcl.__kwdefaults__["renderer"],
+            "TachyonInternal",
+        )
+
     def test_multiwfn_esp_reuses_density_cube_grid(self) -> None:
         self.assertIn("\n12\n8\ndensity.cub\n2\n0\nq\n", automation.ESP_STDIN_SEQUENCE)
 
@@ -139,6 +150,40 @@ class AutomaticWorkflowTests(unittest.TestCase):
             self.assertIn("set ::MO_REFERENCE_MOL [molinfo top]", script)
             self.assertIn("mol modcolor 1 top Volume 1", script)
             self.assertIn("save_state $::MO_DEBUG_STATE_PATH", script)
+
+    def test_interactive_vmd_window_is_restored_only_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_file = root / "ethanol.fch"
+            input_file.write_text("wavefunction", encoding="utf-8")
+            plan = automation.create_automation_plan(
+                [input_file], "surface_esp", root / "runs", self._settings()
+            )
+            runner = automation.AutomaticWorkflowRunner(
+                plan, Path(sys.executable), Path(sys.executable)
+            )
+            with (
+                mock.patch.object(
+                    orbital_vmd, "vmd_display_window_handles", return_value=set()
+                ),
+                mock.patch.object(
+                    orbital_vmd, "restore_vmd_display_window", return_value=True
+                ) as restore,
+            ):
+                return_code, reason = runner._run_process(
+                    [sys.executable, "-c", "import time; time.sleep(1.2)"],
+                    cwd=root,
+                    env={},
+                    stdin_text=None,
+                    timeout_seconds=10,
+                    log_path=root / "vmd-window.log",
+                    source="VMD",
+                    index=1,
+                    hide_window=True,
+                    show_window=True,
+                )
+            self.assertEqual((return_code, reason), (0, ""))
+            self.assertEqual(restore.call_count, 1)
 
     def test_full_pipeline_collects_png_cubes_logs_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
