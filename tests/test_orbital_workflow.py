@@ -6,8 +6,10 @@ import json
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import orbital_data
 import orbital_diagram_workflow as workflow
@@ -634,6 +636,38 @@ class OrbitalVmdTests(unittest.TestCase):
             ),
             matrices={name: identity for name in orbital_vmd._MATRIX_NAMES},
         ).validate()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows VMD window behavior")
+    def test_window_restore_does_not_report_success_while_minimized(self) -> None:
+        class Win32Call:
+            def __init__(self, result: int) -> None:
+                self.result = result
+
+            def __call__(self, *_args) -> int:
+                return self.result
+
+        is_iconic = Win32Call(1)
+        user32 = types.SimpleNamespace(
+            ShowWindowAsync=Win32Call(1),
+            SetWindowPos=Win32Call(1),
+            BringWindowToTop=Win32Call(1),
+            SetForegroundWindow=Win32Call(1),
+            IsWindowVisible=Win32Call(1),
+            IsIconic=is_iconic,
+        )
+        with (
+            mock.patch.object(
+                orbital_vmd, "vmd_display_window_handles", return_value={101}
+            ),
+            mock.patch.object(
+                orbital_vmd.ctypes,
+                "windll",
+                types.SimpleNamespace(user32=user32),
+            ),
+        ):
+            self.assertFalse(orbital_vmd.restore_vmd_display_window(42))
+            is_iconic.result = 0
+            self.assertTrue(orbital_vmd.restore_vmd_display_window(42))
 
     def test_capture_script_saves_complete_state_only_on_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -85,6 +85,8 @@ def vmd_display_window_handles(process_id: int | None = None) -> set[int]:
         user32.GetWindowTextW.restype = ctypes.c_int
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
         user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
         matches: set[int] = set()
 
         @callback_type
@@ -171,7 +173,9 @@ def restore_vmd_display_window(
             user32.BringWindowToTop(hwnd)
             user32.SetForegroundWindow(hwnd)
             restored = restored or bool(
-                positioned and user32.IsWindowVisible(hwnd)
+                positioned
+                and user32.IsWindowVisible(hwnd)
+                and not user32.IsIconic(hwnd)
             )
         return restored
     except (AttributeError, OSError, TypeError, ValueError):
