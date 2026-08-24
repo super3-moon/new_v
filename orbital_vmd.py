@@ -806,7 +806,8 @@ def _hex_text(value: object) -> str:
 
 
 def _tcl_hex_expression(value: object) -> str:
-    return f"[_mo_unhex {_hex_text(value)}]"
+    encoded = _hex_text(value)
+    return f"[_mo_unhex {encoded or '{}'}]"
 
 
 _SAFE_STYLE_PREFIXES = (
@@ -1594,7 +1595,7 @@ def _restore_global_scene_tcl(
                 f"set MO_CAT {_tcl_hex_expression(entry.category)}",
                 f"set MO_ITEM {_tcl_hex_expression(entry.item)}",
                 f"set MO_COLOR_NAME {_tcl_hex_expression(entry.color)}",
-                "color $MO_CAT $MO_ITEM $MO_COLOR_NAME",
+                "catch {color $MO_CAT $MO_ITEM $MO_COLOR_NAME}",
             ]
         )
     for scale in state.color_scales:
@@ -1717,6 +1718,25 @@ def _restore_native_state_tcl(
     reference_cube_path: Path | str,
     restore_exact_color_slots: bool = False,
 ) -> list[str]:
+    global_lines = _restore_global_scene_tcl(
+        state,
+        width=width,
+        height=height,
+        restore_exact_color_slots=restore_exact_color_slots,
+    )
+    if restore_exact_color_slots:
+        # VMD's -e script runner echoes every top-level command result.  An
+        # exact ESP palette can contain over a thousand RGB slots, making an
+        # otherwise sub-second replay spend tens of seconds writing console
+        # output.  Execute the same commands inside one Tcl procedure so only
+        # the final result is returned; the restored scene is unchanged.
+        global_lines = [
+            "proc _mo_restore_captured_globals {} {",
+            *(f"    {line}" for line in global_lines),
+            "}",
+            "_mo_restore_captured_globals",
+            "rename _mo_restore_captured_globals {}",
+        ]
     lines = [
         "proc _mo_unhex {value} { return [encoding convertfrom utf-8 [binary format H* $value]] }",
         *_native_state_loader_tcl(
@@ -1730,12 +1750,7 @@ def _restore_native_state_tcl(
         # representations, labels, macros and viewpoints, but omits several
         # global display/light fields.  Overlay the validated snapshot only
         # for those globals; native molecule state remains authoritative.
-        *_restore_global_scene_tcl(
-            state,
-            width=width,
-            height=height,
-            restore_exact_color_slots=restore_exact_color_slots,
-        ),
+        *global_lines,
         *_render_tail_tcl(state, output=output, renderer=renderer),
     ]
     return lines

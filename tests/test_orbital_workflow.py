@@ -759,6 +759,7 @@ class OrbitalVmdTests(unittest.TestCase):
                 script.rfind("color change rgb 0"),
                 script.rfind("color scale colors $MO_SCALE_NAME"),
             )
+            self.assertEqual(orbital_vmd._tcl_hex_expression(""), "[_mo_unhex {}]")
 
     def test_batch_render_fits_requested_box_to_captured_aspect(self) -> None:
         self.assertEqual(
@@ -823,6 +824,25 @@ class OrbitalVmdTests(unittest.TestCase):
             self.assertIn("rename mol _mo_native_mol_command", script)
             self.assertIn("set args [lreplace $args 0 0 $::MO_NATIVE_REPLACEMENT]", script)
             self.assertIn("display resize 900 630", script)
+
+            esp_state = dataclasses.replace(
+                state,
+                colors=(orbital_vmd.VmdColor(0, (0.2, 0.3, 0.4), "blue"),),
+            ).validate()
+            esp_script = orbital_vmd.build_batch_render_tcl(
+                target,
+                root / "target.dat",
+                esp_state,
+                width=900,
+                height=900,
+                renderer="Tachyon",
+                native_state_path=native,
+                reference_cube_path=reference,
+                restore_exact_color_slots=True,
+            )
+            self.assertIn("proc _mo_restore_captured_globals {} {", esp_script)
+            self.assertIn("    color change rgb 0", esp_script)
+            self.assertIn("_mo_restore_captured_globals\nrename", esp_script)
 
 
 if __name__ == "__main__":
