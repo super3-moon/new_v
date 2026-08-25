@@ -1724,12 +1724,13 @@ def _restore_native_state_tcl(
         height=height,
         restore_exact_color_slots=restore_exact_color_slots,
     )
-    if restore_exact_color_slots:
-        # VMD's -e script runner echoes every top-level command result.  An
-        # exact ESP palette can contain over a thousand RGB slots, making an
-        # otherwise sub-second replay spend tens of seconds writing console
-        # output.  Execute the same commands inside one Tcl procedure so only
-        # the final result is returned; the restored scene is unchanged.
+    if global_lines:
+        # VMD's -e script runner echoes every top-level command result.  Scene
+        # replay contains hundreds of color, material and display commands
+        # (and an exact ESP palette can contain over a thousand RGB slots),
+        # making an otherwise sub-second replay spend tens of seconds writing
+        # console output. Execute the same commands inside one Tcl procedure;
+        # the restored scene is unchanged.
         global_lines = [
             "proc _mo_restore_captured_globals {} {",
             *(f"    {line}" for line in global_lines),
@@ -1776,6 +1777,7 @@ def _restore_state_tcl(
         "mol new $MO_CUBE type cube waitfor all",
         "set MO_MOL [molinfo top]",
     ]
+    scene_start = len(lines)
 
     color_lines = [
         (
@@ -1923,6 +1925,22 @@ def _restore_state_tcl(
             "mol top $MO_MOL",
         ]
     )
+    scene_lines = lines[scene_start:]
+    lines = lines[:scene_start]
+    if scene_lines:
+        # VMD prints every top-level Tcl result.  The fallback data-state replay
+        # contains thousands of color/material commands, so executing the same
+        # scene restoration inside one procedure avoids a fixed ~30 s console
+        # output delay without changing the restored scene.
+        lines.extend(
+            [
+                "proc _mo_restore_captured_scene {MO_MOL} {",
+                *(f"    {line}" for line in scene_lines),
+                "}",
+                "_mo_restore_captured_scene $MO_MOL",
+                "rename _mo_restore_captured_scene {}",
+            ]
+        )
     lines.extend(_render_tail_tcl(state, output=output, renderer=renderer))
     return lines
 
