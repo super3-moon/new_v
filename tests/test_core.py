@@ -156,27 +156,25 @@ mol addrep top
         self.assertEqual(source["name"], "Soft Artistic Glossy")
         self.assertNotIn("code", source)
 
-    def test_legacy_presets_are_unchanged_and_new_presets_are_appended(self) -> None:
+    def test_curated_presets_and_new_presets_are_appended(self) -> None:
         canonical = lambda value: json.dumps(
             value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         self.assertEqual(
             hashlib.sha256(canonical(core.ORIGINAL_SURFACE_STYLES)).hexdigest(),
-            "0b8a3162eeaecf45cca3a73e613fa29a126fb18e74d22dc054ef2fb7ddbf7a82",
+            "46cb6db69c72c980719036ac54184f533a125e8ee96f7c98f20a7b712cae8e8a",
         )
         self.assertEqual(
             hashlib.sha256(canonical(core.ORIGINAL_SKELETON_STYLES)).hexdigest(),
             "8cc70caa8a512f58983ce50b5740dd537ee90d36e698a7630079f6b73baa700c",
         )
         self.assertEqual(
-            [style["id"] for style in core.STYLES[:10]],
+            [style["id"] for style in core.STYLES[:8]],
             [
                 "classic_glossy_447",
                 "soft_glossy_449",
-                "edgyglass_overlap_483",
                 "bright_bule_yellow_userpack",
                 "modern_cool_palette_userpack",
-                "edgyglass_tuned_443",
                 "goodsell_58009",
                 "edgy_58009",
                 "translucent_clean_447",
@@ -184,7 +182,7 @@ mol addrep top
             ],
         )
         self.assertEqual(
-            [style["id"] for style in core.STYLES[10:]],
+            [style["id"] for style in core.STYLES[8:]],
             list(core._APPENDED_STYLE_IDS),
         )
         self.assertEqual(
@@ -216,12 +214,22 @@ mol addrep top
                 "D1": "density_d1_green_blue_glossy",
                 "D2": "classic_glossy_447",
                 "D3": "soft_glossy_449",
-                "D4": "edgyglass_overlap_483",
                 "D5": "bright_bule_yellow_userpack",
                 "D6": "density_d6_green_orange_diffuse",
                 "D7": "modern_cool_palette_userpack",
             },
         )
+
+    def test_curated_translucent_palettes_replace_redundant_edgyglass_cards(self) -> None:
+        for style_id in (
+            "bright_bule_yellow_userpack",
+            "modern_cool_palette_userpack",
+        ):
+            style = core.STYLE_BY_ID[style_id]
+            self.assertIn("material change opacity Glossy 0.750000", style["commands"])
+            self.assertNotIn("material change opacity Glossy 1.000000", style["commands"])
+        self.assertNotIn("edgyglass_overlap_483", core.STYLE_BY_ID)
+        self.assertNotIn("edgyglass_tuned_443", core.STYLE_BY_ID)
         self.assertEqual(
             {
                 style["code"]: style["image"]

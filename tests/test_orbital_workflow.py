@@ -793,6 +793,9 @@ class OrbitalVmdTests(unittest.TestCase):
                 "color scale colors $MO_SCALE_NAME {1 0 0} {1 1 1} {0 0 1}",
                 script,
             )
+            self.assertIn("proc _mo_restore_captured_scene {MO_MOL} {", script)
+            self.assertIn("    material change opacity $MO_MATERIAL 1", script)
+            self.assertIn("_mo_restore_captured_scene $MO_MOL\nrename", script)
 
     def test_native_state_is_paired_and_reference_cube_is_substituted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -843,6 +846,17 @@ class OrbitalVmdTests(unittest.TestCase):
             self.assertIn("proc _mo_restore_captured_globals {} {", esp_script)
             self.assertIn("    color change rgb 0", esp_script)
             self.assertIn("_mo_restore_captured_globals\nrename", esp_script)
+
+            orbital_script = orbital_vmd.build_batch_render_tcl(
+                target,
+                root / "target.tga",
+                state,
+                width=900,
+                height=900,
+                native_state_path=native,
+                reference_cube_path=reference,
+            )
+            self.assertIn("proc _mo_restore_captured_globals {} {", orbital_script)
 
 
 if __name__ == "__main__":
