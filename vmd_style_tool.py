@@ -139,22 +139,6 @@ ORIGINAL_SURFACE_STYLES = [
         "notes": "Color and material tuning from VMDrender.txt logic.",
     },
     {
-        "id": "edgyglass_overlap_483",
-        "name": "Overlap Emphasis (EdgyGlass)",
-        "image": "03_iso2_overlap_cube.png",
-        "material": "EdgyGlass",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 on",
-        ],
-        "sources": ["http://sobereva.com/483"],
-        "notes": "Good for two-cube overlap readability.",
-    },
-    {
         "id": "bright_bule_yellow_userpack",
         "name": "Bright Blue + Yellow",
         "image": "23_bright_blue_yellow.png",
@@ -173,10 +157,10 @@ ORIGINAL_SURFACE_STYLES = [
             "material change specular Glossy 0.080000",
             "material change diffuse Glossy 0.920000",
             "material change shininess Glossy 0.040000",
-            "material change opacity Glossy 1.000000",
+            "material change opacity Glossy 0.750000",
         ],
         "sources": ["user-upload:param-pack"],
-        "notes": "Imported from Bright_Bule+Yellow.txt",
+        "notes": "Bright cyan/yellow orbital style with a translucent Glossy surface.",
     },
     {
         "id": "modern_cool_palette_userpack",
@@ -197,29 +181,10 @@ ORIGINAL_SURFACE_STYLES = [
             "material change diffuse Glossy 0.920000",
             "material change shininess Glossy 0.030000",
             "material change mirror Glossy 0.000000",
-            "material change opacity Glossy 1.000000",
+            "material change opacity Glossy 0.750000",
         ],
         "sources": ["user-upload:param-pack"],
-        "notes": "Imported from Modern_cool palette.txt",
-    },
-    {
-        "id": "edgyglass_tuned_443",
-        "name": "EdgyGlass Tuned Opacity",
-        "image": "05_edgyglass_tuned_opacity.jpg",
-        "material": "EdgyGlass",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "display projection Orthographic",
-            "material change outline EdgyGlass 0.590000",
-            "material change outlinewidth EdgyGlass 0.340000",
-            "material change opacity EdgyGlass 0.730000",
-            "material change shininess EdgyGlass 0.800000",
-            "material change diffuse EdgyGlass 0.800000",
-            "material change specular EdgyGlass 0.250000",
-        ],
-        "sources": ["http://sobereva.com/443"],
-        "notes": "Reduced glare for crowded surfaces.",
+        "notes": "Modern cool orbital palette with a translucent Glossy surface.",
     },
     {
         "id": "goodsell_58009",
@@ -559,7 +524,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
     },
 ]
 
-# D2/D3/D4/D5/D7 already existed before the ESP work.  Keep the original
+# D2/D3/D5/D7 already existed before the ESP work.  Keep the original
 # cards instead of cloning or renaming them; only genuinely new presets are
 # appended.  This map records the selected research labels without changing
 # any legacy record.
@@ -567,7 +532,6 @@ DENSITY_DIFFERENCE_STYLE_MAP = {
     "D1": "density_d1_green_blue_glossy",
     "D2": "classic_glossy_447",
     "D3": "soft_glossy_449",
-    "D4": "edgyglass_overlap_483",
     "D5": "bright_bule_yellow_userpack",
     "D6": "density_d6_green_orange_diffuse",
     "D7": "modern_cool_palette_userpack",
