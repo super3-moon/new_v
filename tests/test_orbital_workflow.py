@@ -574,6 +574,30 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             self.assertEqual((return_code, reason), (0, ""))
             self.assertEqual(lines, ["first", "second"])
 
+    def test_interactive_vmd_window_is_not_repositioned_after_first_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = self._plan(root)
+            runner = workflow.OrbitalDiagramRunner(
+                plan, Path(sys.executable), Path(sys.executable)
+            )
+            restore = mock.Mock(return_value=True)
+            with mock.patch.object(runner, "_restore_vmd_window", restore):
+                return_code, reason = runner._run_process(
+                    [sys.executable, "-c", "import time; time.sleep(1.1)"],
+                    cwd=root,
+                    env={},
+                    stdin_text=None,
+                    timeout_seconds=20,
+                    log_path=root / "interactive.log",
+                    source="VMD",
+                    job=plan.jobs[0],
+                    hide_window=True,
+                    show_window=True,
+                )
+            self.assertEqual((return_code, reason), (0, ""))
+            restore.assert_called_once()
+
 
 class OrbitalVmdTests(unittest.TestCase):
     @staticmethod

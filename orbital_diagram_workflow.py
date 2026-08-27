@@ -2183,6 +2183,7 @@ class OrbitalDiagramRunner:
             thread.start()
             started = time.monotonic()
             next_window_check = started
+            vmd_window_restored = False
             stream_finished = False
             reason = ""
             callback_error: Exception | None = None
@@ -2196,16 +2197,16 @@ class OrbitalDiagramRunner:
                     now = time.monotonic()
                     if (
                         show_window
+                        and not vmd_window_restored
                         and now >= next_window_check
                         and now - started <= 20.0
                     ):
-                        self._restore_vmd_window(
+                        vmd_window_restored = self._restore_vmd_window(
                             process.pid,
                             excluded_handles=existing_vmd_windows,
                         )
-                        # Repeat briefly even after the first successful restore:
-                        # VMD 1.9.3 can apply its remembered minimized state a
-                        # moment after creating the OpenGL window.
+                        # Retry only until the display has been restored once.
+                        # Repositioning it again would override the user's drag.
                         next_window_check = now + 0.7
                     try:
                         item = output_queue.get(timeout=0.1)
