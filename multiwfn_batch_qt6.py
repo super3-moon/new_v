@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import uuid
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Callable
 
 import multiwfn_batch as batch
+import qt_feedback
+import user_feedback
 from multiwfn_recorder_qt6 import MultiwfnRecorderDialog
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices
@@ -289,6 +292,8 @@ class MultiwfnBatchPage(QWidget):
         self._draft_return_preset_id = ""
         self._loaded_summary_text = ""
         self._active_run_mode = ""
+        self._trial_signature = ""
+        self._continue_requires_retrial = False
         self._tab_animation: QPropertyAnimation | None = None
         self._progress_animation: QPropertyAnimation | None = None
         self._build_ui()
@@ -510,6 +515,7 @@ class MultiwfnBatchPage(QWidget):
         output_label.setObjectName("formLabel")
         output_row.addWidget(output_label)
         self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.textChanged.connect(self._invalidate_trial_if_needed)
         self.output_dir_edit.setPlaceholderText("批处理运行记录和结果保存位置")
         output_row.addWidget(self.output_dir_edit, 1)
         pick_output = QPushButton("选择")
@@ -559,6 +565,7 @@ class MultiwfnBatchPage(QWidget):
         self.paste_commands_button = QPushButton("从剪贴板载入")
         self.paste_commands_button.setMinimumHeight(42)
         self.paste_commands_button.clicked.connect(self._paste_command_sequence)
+        QApplication.clipboard().dataChanged.connect(self._sync_clipboard_action)
         self.import_commands_button = QPushButton("导入命令 TXT")
         self.import_commands_button.setMinimumHeight(42)
         self.import_commands_button.clicked.connect(self._import_command_text)
@@ -570,6 +577,7 @@ class MultiwfnBatchPage(QWidget):
         source_buttons.addWidget(self.import_commands_button)
         source_buttons.addWidget(self.record_commands_button)
         source_buttons.addStretch(1)
+        self._sync_clipboard_action()
         source_layout.addLayout(source_buttons)
         template_page_layout.addWidget(source_frame)
 
@@ -947,8 +955,34 @@ class MultiwfnBatchPage(QWidget):
         if self._loading_editor:
             return
         self._editor_dirty = True
-        self.continue_batch_button.setVisible(False)
+        self._invalidate_trial_if_needed()
         self._update_editor_state_chrome()
+
+    def _configuration_signature(self) -> str:
+        try:
+            preset = self._preset_from_editor(
+                preset_id=self._editor_preset_id or "unsaved_draft"
+            )
+            payload = {
+                "preset": preset.to_dict(),
+                "files": [self._file_key(path) for path in self._enabled_files()],
+                "output": self.output_dir_edit.text().strip(),
+            }
+        except Exception:
+            return ""
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _invalidate_trial_if_needed(self, *_args) -> None:
+        if self.is_running() or not self._trial_signature:
+            return
+        if self._trial_signature == self._configuration_signature():
+            return
+        self._continue_requires_retrial = True
+        self.run_summary_label.setText("文件或流程设置已变化，请用当前设置重新试运行首个文件。")
+        self._set_run_state("需要重新试运行", "warning")
+        self.continue_batch_button.setText("重新试运行")
+        self.continue_batch_button.setToolTip("使用当前文件和流程设置重新试运行。")
+        self.continue_batch_button.setVisible(True)
 
     def _preset_by_id(self, preset_id: str) -> batch.BatchPreset | None:
         return next((item for item in self.presets if item.id == preset_id), None)
@@ -1129,7 +1163,7 @@ class MultiwfnBatchPage(QWidget):
         self.preset_summary_label.hide()
         self._loaded_summary_text = f"{preset.name}\n{summary}"
         self.task_preset_summary.setText(self._loaded_summary_text)
-        self.continue_batch_button.setVisible(False)
+        self._invalidate_trial_if_needed()
 
     def _new_preset(self) -> None:
         fallback_id = (
@@ -1243,13 +1277,25 @@ class MultiwfnBatchPage(QWidget):
     def _paste_command_sequence(self) -> None:
         text = QApplication.clipboard().text()
         if not text:
-            QMessageBox.information(self, "剪贴板为空", "剪贴板中没有可载入的命令文本。")
+            self.task_preset_summary.setText("剪贴板中没有可载入的命令文本。")
+            self._sync_clipboard_action()
             return
         if not self._replace_sequence_allowed("载入剪贴板命令"):
             return
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         self.sequence_editor.set_text(normalized)
         self._append_log("已从剪贴板载入 Multiwfn 命令序列。")
+
+    def _sync_clipboard_action(self) -> None:
+        if not hasattr(self, "paste_commands_button"):
+            return
+        available = bool(QApplication.clipboard().text().strip())
+        self.paste_commands_button.setEnabled(available and not self.is_running())
+        self.paste_commands_button.setToolTip(
+            "从剪贴板载入命令文本。"
+            if available
+            else "剪贴板中没有可载入的命令文本。"
+        )
 
     def _import_command_text(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -1263,7 +1309,7 @@ class MultiwfnBatchPage(QWidget):
         try:
             text = batch.read_command_text_file(Path(path))
         except Exception as exc:
-            QMessageBox.critical(self, "命令文件无法导入", str(exc))
+            qt_feedback.show_error(self, "命令文件无法导入", exc, stage="导入命令文本", file_path=path)
             return
         if not self._replace_sequence_allowed("导入命令 TXT"):
             return
@@ -1275,10 +1321,13 @@ class MultiwfnBatchPage(QWidget):
             return
         multiwfn_exe = Path(self.multiwfn_path_getter()).expanduser()
         if not multiwfn_exe.is_file():
-            QMessageBox.warning(
+            qt_feedback.show_error(
                 self,
                 "Multiwfn 路径无效",
-                "请先在设置中选择 Multiwfn_2026.7.11_bin_Win64\\Multiwfn.exe。",
+                FileNotFoundError(str(multiwfn_exe)),
+                stage="启动操作记录",
+                program="Multiwfn",
+                file_path=multiwfn_exe,
             )
             return
         enabled = self._enabled_files()
@@ -1519,7 +1568,7 @@ class MultiwfnBatchPage(QWidget):
             users.append(preset)
             batch.save_user_presets(self.presets_file, users)
         except Exception as exc:
-            QMessageBox.critical(self, "流程保存失败", str(exc))
+            qt_feedback.show_error(self, "流程保存失败", exc, stage="保存批量流程", file_path=self.presets_file)
             return False
         self._reload_presets(preset.id)
         self._append_log(f"已保存自定义流程：{preset.name}")
@@ -1528,7 +1577,7 @@ class MultiwfnBatchPage(QWidget):
     def _update_current_preset(self) -> bool:
         current = self._editor_base_preset()
         if current is None or current.builtin:
-            QMessageBox.information(self, "无法更新", "内置流程请使用“保存为新流程”。")
+            self.task_preset_summary.setText("内置流程不能覆盖，请使用“保存为新流程”。")
             return False
         try:
             replacement = self._preset_from_editor(preset_id=current.id)
@@ -1539,7 +1588,7 @@ class MultiwfnBatchPage(QWidget):
             ]
             batch.save_user_presets(self.presets_file, users)
         except Exception as exc:
-            QMessageBox.critical(self, "流程更新失败", str(exc))
+            qt_feedback.show_error(self, "流程更新失败", exc, stage="更新批量流程", file_path=self.presets_file)
             return False
         self._reload_presets(replacement.id)
         self._append_log(f"已更新流程：{replacement.name}")
@@ -1583,7 +1632,7 @@ class MultiwfnBatchPage(QWidget):
                 known.add(preset.id)
             batch.save_user_presets(self.presets_file, users)
         except Exception as exc:
-            QMessageBox.critical(self, "流程导入失败", str(exc))
+            qt_feedback.show_error(self, "流程导入失败", exc, stage="导入批量流程", file_path=path)
             return
         self._reload_presets(imported[-1].id if imported else "")
         self._append_log(f"已导入 {len(imported)} 个批量流程。")
@@ -1595,7 +1644,7 @@ class MultiwfnBatchPage(QWidget):
                 preset_id=base.id if base is not None else "multiwfn_flow"
             )
         except Exception as exc:
-            QMessageBox.critical(self, "流程无效", str(exc))
+            qt_feedback.show_error(self, "流程无效", exc, stage="核验批量流程")
             return
         default_name = f"{preset.id}.json"
         path, _ = QFileDialog.getSaveFileName(
@@ -1606,7 +1655,7 @@ class MultiwfnBatchPage(QWidget):
         try:
             batch.save_preset_file(Path(path), [preset])
         except Exception as exc:
-            QMessageBox.critical(self, "流程导出失败", str(exc))
+            qt_feedback.show_error(self, "流程导出失败", exc, stage="导出批量流程", file_path=path)
             return
         self._append_log(f"流程已导出：{path}")
 
@@ -1660,6 +1709,7 @@ class MultiwfnBatchPage(QWidget):
             self.file_enabled[self._file_key(self.files[row])] = (
                 item.checkState() == Qt.Checked
             )
+            self._invalidate_trial_if_needed()
 
     def _handle_dropped_paths(self, paths: list[Path]) -> None:
         files: list[Path] = []
@@ -1720,7 +1770,7 @@ class MultiwfnBatchPage(QWidget):
         self.file_table.blockSignals(False)
         self.file_count_label.setText(f"{len(self.files)} 个文件")
         if hasattr(self, "continue_batch_button"):
-            self.continue_batch_button.setVisible(False)
+            self._invalidate_trial_if_needed()
 
     def _remove_selected_files(self) -> None:
         self._capture_file_enabled_states()
@@ -1775,7 +1825,7 @@ class MultiwfnBatchPage(QWidget):
             plan = batch.create_batch_plan(files, preset, output_root, preset.variables, prefix="preview")
             preview = batch.render_job_preview(plan, plan.jobs[0], exe)
         except Exception as exc:
-            QMessageBox.critical(self, "预检失败", str(exc))
+            qt_feedback.show_error(self, "预检失败", exc, stage="批量任务预检")
             return
         command = subprocess.list2cmdline(preview["command"])
         text = (
@@ -1812,10 +1862,11 @@ class MultiwfnBatchPage(QWidget):
         try:
             preset, files, output_root, exe = self._validated_run_inputs()
         except Exception as exc:
-            QMessageBox.critical(self, "无法开始", str(exc))
+            qt_feedback.show_error(self, "无法开始", exc, stage="检查批量任务设置")
             return
         if trial:
             files = files[:1]
+            self._continue_requires_retrial = False
         self._active_run_mode = "trial" if trial else "batch"
         self.continue_batch_button.setVisible(False)
         self._populate_queue(files)
@@ -1828,6 +1879,7 @@ class MultiwfnBatchPage(QWidget):
         self.trial_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_results_button.setEnabled(False)
+        self._set_run_inputs_enabled(False)
         self.workspace_tabs.setCurrentIndex(2)
         self.settingsChanged.emit(
             {
@@ -1894,12 +1946,15 @@ class MultiwfnBatchPage(QWidget):
         self.start_button.setEnabled(True)
         self.trial_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self._set_run_inputs_enabled(True)
+        self._sync_clipboard_action()
         if error:
+            friendly = user_feedback.friendly_error_text(error, stage="运行批量任务")
             self.continue_batch_button.setVisible(False)
-            self.run_summary_label.setText(f"运行失败：{error}")
+            self.run_summary_label.setText(f"运行失败：{friendly}")
             self._set_run_state("运行失败", "failed")
-            self._append_log(f"运行失败：{error}")
-            QMessageBox.critical(self, "批处理失败", error)
+            self._append_log(f"运行失败：{friendly}")
+            qt_feedback.show_error(self, "批处理失败", error, stage="运行批量任务")
             return
         assert result is not None
         self.last_run_dir = str(result.get("run_dir") or self.last_run_dir)
@@ -1926,6 +1981,8 @@ class MultiwfnBatchPage(QWidget):
         ):
             total = len(self._enabled_files())
             if total > 1:
+                self._trial_signature = self._configuration_signature()
+                self._continue_requires_retrial = False
                 self.continue_batch_button.setText(
                     f"试运行通过，开始全部 {total} 个文件"
                 )
@@ -1935,14 +1992,30 @@ class MultiwfnBatchPage(QWidget):
                 self.continue_batch_button.setVisible(True)
         else:
             self.continue_batch_button.setVisible(False)
-        if int(result.get("failed") or 0) > 0:
-            QMessageBox.warning(self, "批处理完成", summary)
-        else:
-            QMessageBox.information(self, "批处理完成", summary)
+        qt_feedback.show_toast(
+            self,
+            "批处理已完成，请在结果区域查看失败项。"
+            if int(result.get("failed") or 0) > 0
+            else "批量任务已全部完成。",
+            timeout_ms=5000,
+        )
 
     def _continue_full_batch(self) -> None:
         self.continue_batch_button.setVisible(False)
-        self._start_run(False)
+        if (
+            self._continue_requires_retrial
+            or not self._trial_signature
+            or self._trial_signature != self._configuration_signature()
+        ):
+            self._start_run(True)
+        else:
+            self._start_run(False)
+
+    def _set_run_inputs_enabled(self, enabled: bool) -> None:
+        reason = "" if enabled else "当前任务运行中，停止或完成后可以修改。"
+        for index in (0, 1):
+            self.workspace_tabs.setTabEnabled(index, enabled)
+            self.workspace_tabs.setTabToolTip(index, reason)
 
     @Slot()
     def _cleanup_thread(self) -> None:

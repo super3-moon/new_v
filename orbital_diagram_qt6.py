@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import orbital_data
+import qt_feedback
+import user_feedback
 import vmd_style_tool as core
 from PySide6.QtCore import QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
@@ -684,6 +686,7 @@ class OrbitalDiagramPage(QWidget):
 
     def _build_configuration_page(self) -> QWidget:
         page = QWidget()
+        self.configuration_page = page
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
@@ -1099,7 +1102,7 @@ class OrbitalDiagramPage(QWidget):
 
     def _choose_style(self) -> None:
         if self.is_running():
-            QMessageBox.information(self, "任务运行中", "请先停止当前任务，再更换绘图方案。")
+            self.style_detail_label.setText("当前任务运行中，停止或完成后可以修改绘图方案。")
             return
         result: object
         if self.style_dialog_factory is None:
@@ -1130,11 +1133,11 @@ class OrbitalDiagramPage(QWidget):
             selection_method = getattr(dialog, "selection", None)
             selection = selection_method() if callable(selection_method) else {}
         if not isinstance(selection, dict):
-            QMessageBox.warning(self, "方案不可用", "绘图方案选择器没有返回有效设置。")
+            self.style_detail_label.setText("绘图方案未能读取，请重新选择。")
             return
         style = selection.get("style")
         if not isinstance(style, dict) or str(style.get("surface_mode") or "signed") != "signed":
-            QMessageBox.warning(self, "方案不兼容", "分子轨道只能使用正负相位绘图方案。")
+            self.style_detail_label.setText("该方案不适用于分子轨道，请选择正负相位绘图方案。")
             return
         selection = copy.deepcopy(selection)
         selection["hash"] = _style_hash(selection)
@@ -1160,10 +1163,10 @@ class OrbitalDiagramPage(QWidget):
     @Slot(object)
     def _add_paths(self, paths: object) -> None:
         if self.is_input_processing():
-            QMessageBox.information(self, "正在读取文件", "请等待当前文件读取完成，或先停止读取。")
+            self.input_progress_label.setText("正在读取文件，请等待完成或先停止读取。")
             return
         if self._workflow_is_running():
-            QMessageBox.information(self, "任务运行中", "请先停止当前任务，再修改输入。")
+            self.input_progress_label.setText("当前任务运行中，停止或完成后可以修改输入。")
             return
         raw_paths = paths if isinstance(paths, (list, tuple)) else [paths]
         sources = [*self.input_files, *[Path(item) for item in raw_paths if item]]
@@ -1200,10 +1203,8 @@ class OrbitalDiagramPage(QWidget):
             return
         rows = sorted({index.row() for index in self.input_table.selectedIndexes()})
         if len(rows) != 2:
-            QMessageBox.information(
-                self,
-                "请选择两个文件",
-                "请同时选择一个 out/log 和一个 fch/fchk 或 Molden 文件。",
+            self.pair_status_label.setText(
+                "请同时选择一个 out/log 和一个 fch/fchk 或 Molden 文件。"
             )
             return
         paths = [self.input_files[row] for row in rows]
@@ -1216,11 +1217,7 @@ class OrbitalDiagramPage(QWidget):
         ]
         outputs = [path for path in paths if path.suffix.casefold() in {".out", ".log"}]
         if len(wavefunctions) != 1 or len(outputs) != 1:
-            QMessageBox.warning(
-                self,
-                "无法配对",
-                "选择内容必须恰好包含一个计算输出和一个波函数文件。",
-            )
+            self.pair_status_label.setText("选择内容必须恰好包含一个计算输出和一个波函数文件。")
             return
         wavefunction, output = wavefunctions[0], outputs[0]
         expected = (
@@ -1985,7 +1982,7 @@ class OrbitalDiagramPage(QWidget):
                 if not self._confirm_energy_spacing(settings):
                     return
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "无法开始", str(exc))
+            qt_feedback.show_error(self, "无法开始", exc, stage="检查轨道能级图设置")
             return
         self._active_pairs = list(pairs)
         self._active_job_ids = {str(item) for item in list(job_ids or []) if str(item)}
@@ -2039,6 +2036,8 @@ class OrbitalDiagramPage(QWidget):
         self.retry_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.open_results_button.setEnabled(False)
+        self.configuration_page.setEnabled(False)
+        self.configuration_page.setToolTip("当前任务运行中，停止或完成后可以修改。")
         self.page_stack.setCurrentIndex(1)
         if self.queue_table.rowCount() and not self.queue_table.selectedItems():
             self.queue_table.selectRow(0)
@@ -2163,25 +2162,7 @@ class OrbitalDiagramPage(QWidget):
 
     @staticmethod
     def _friendly_runtime_error(error: object) -> str:
-        text = str(error or "").strip().casefold()
-        if any(
-            marker in text
-            for marker in (
-                "couldn't open",
-                "could not open",
-                "error opening",
-                "no such file",
-                "file not found",
-                "路径不存在",
-                "文件不存在",
-            )
-        ):
-            return "绘图程序无法打开所需文件，请确认文件仍存在且所在目录可访问。"
-        if "multiwfn" in text:
-            return "轨道数据未能生成，请在结果目录中查看完整日志。"
-        if "vmd" in text or "tachyon" in text:
-            return "轨道图像未能生成，请在结果目录中查看完整日志。"
-        return "任务未能完成，请在结果目录中查看完整日志。"
+        return user_feedback.friendly_error_text(error, stage="分子轨道能级图流程")
 
     @Slot(object)
     def _on_worker_event(self, raw_event: object) -> None:
@@ -2340,6 +2321,8 @@ class OrbitalDiagramPage(QWidget):
         self._runtime_timer.stop()
         self.cancel_button.setEnabled(False)
         self.start_button.setEnabled(True)
+        self.configuration_page.setEnabled(True)
+        self.configuration_page.setToolTip("")
         jobs = self._result_jobs(result)
         if error is not None:
             friendly_error = self._friendly_runtime_error(error)
@@ -2464,7 +2447,8 @@ class OrbitalDiagramPage(QWidget):
             return
         rows = self.queue_table.selectionModel().selectedRows()
         if not rows:
-            QMessageBox.information(self, "请选择任务", "请先在队列中选择一个失败任务。")
+            self.run_state_label.setText("请先在队列中选择一个失败任务。")
+            self.retry_button.setEnabled(False)
             return
         row = rows[0].row()
         item = self.queue_table.item(row, 0)
@@ -2478,7 +2462,8 @@ class OrbitalDiagramPage(QWidget):
             None,
         )
         if pair is None:
-            QMessageBox.warning(self, "无法重试", "没有找到该任务对应的输入配对。")
+            self.run_state_label.setText("没有找到该任务对应的输入配对，请返回流程设置检查文件。")
+            self.retry_button.setEnabled(False)
             return
         result_job = next(
             (
@@ -2499,11 +2484,8 @@ class OrbitalDiagramPage(QWidget):
         ]
         job_id = str(result_job.get("id") or "")
         if not manifest.is_file() or not stages or not job_id:
-            QMessageBox.warning(
-                self,
-                "无法断点重试",
-                "该任务没有完整的运行记录。请返回流程设置后重新运行。",
-            )
+            self.run_state_label.setText("该任务没有完整的运行记录，请返回流程设置后重新运行。")
+            self.retry_button.setEnabled(False)
             return
         self._start_worker(
             [pair],
@@ -2515,7 +2497,8 @@ class OrbitalDiagramPage(QWidget):
     def _open_results(self) -> None:
         path = Path(self.last_run_dir) if self.last_run_dir else Path(self.output_dir_edit.text().strip())
         if not path.exists():
-            QMessageBox.information(self, "结果目录不可用", "尚未生成可打开的结果目录。")
+            self.run_state_label.setText("尚未生成可打开的结果目录。")
+            self.open_results_button.setEnabled(False)
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 

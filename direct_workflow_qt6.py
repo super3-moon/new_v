@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 import vmd_style_tool as core
+import qt_feedback
 from PySide6.QtCore import QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtWidgets import (
@@ -204,13 +205,14 @@ class DirectWorkflowPage(QWidget):
         style_text.addWidget(self.style_name_label)
         style_text.addWidget(self.style_meta_label)
         style_row.addLayout(style_text, 1)
-        change_style = QPushButton("更换风格")
-        change_style.clicked.connect(self._request_back)
-        style_row.addWidget(change_style)
+        self.change_style_button = QPushButton("更换风格")
+        self.change_style_button.clicked.connect(self._request_back)
+        style_row.addWidget(self.change_style_button)
         style_layout.addLayout(style_row)
         body_layout.addWidget(style_card)
 
         source_card, source_layout = self._card("添加输入文件")
+        self.source_card = source_card
         self.drop_zone = FileDropZone()
         self.drop_zone.fileSelected.connect(self.set_source_file)
         self.drop_zone.browseRequested.connect(self._browse_source)
@@ -232,6 +234,7 @@ class DirectWorkflowPage(QWidget):
         body_layout.addWidget(source_card)
 
         settings_card, settings_layout = self._card("运行设置")
+        self.settings_card = settings_card
         output_label = QLabel("结果与 VMD 图片保存目录")
         output_label.setObjectName("fieldLabel")
         settings_layout.addWidget(output_label)
@@ -343,11 +346,11 @@ class DirectWorkflowPage(QWidget):
 
     def set_source_file(self, raw_path: str) -> None:
         if self.is_running():
-            QMessageBox.information(self, "工作流运行中", "请先停止当前工作流，再更换文件。")
+            self._set_status("当前任务运行中，停止或完成后可以更换文件。")
             return
         path = Path(raw_path).expanduser()
         if not path.is_file():
-            QMessageBox.warning(self, "文件不可用", "请选择一个存在的本地文件。")
+            self._set_status("未能添加文件：请选择一个存在的本地文件。")
             return
         try:
             path = path.resolve()
@@ -387,7 +390,7 @@ class DirectWorkflowPage(QWidget):
             self.set_source_file(path)
 
     def _show_invalid_drop(self, message: str) -> None:
-        QMessageBox.information(self, "无法添加文件", message)
+        self._set_status(message)
 
     def _browse_output_dir(self) -> None:
         current = self.output_dir_edit.text().strip()
@@ -426,16 +429,16 @@ class DirectWorkflowPage(QWidget):
         if self.is_running():
             return
         if not self.style_data:
-            QMessageBox.warning(self, "尚未选择风格", "请返回绘图方案选择绘图风格。")
+            self._set_status("请先返回绘图方案选择绘图风格。")
             return
         if self.source_path is None or not self.source_path.is_file():
-            QMessageBox.warning(self, "尚未添加文件", "请先选择或拖入一个文件。")
+            self._set_status("请先选择或拖入一个文件。")
             return
         try:
             output_dir = self._validated_output_dir()
             iso_value = self._validated_iso()
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "运行设置不完整", str(exc))
+            qt_feedback.show_error(self, "运行设置不完整", exc, stage="检查直接绘图设置")
             return
 
         if self.cube_path is not None and self.cube_path.is_file():
@@ -451,7 +454,14 @@ class DirectWorkflowPage(QWidget):
         multi_raw = self.multiwfn_path_getter().strip()
         multi = Path(multi_raw).expanduser() if multi_raw else Path()
         if not multi_raw or not multi.is_file():
-            QMessageBox.critical(self, "无法启动 Multiwfn", "请先在左侧设置有效的 Multiwfn.exe 路径。")
+            qt_feedback.show_error(
+                self,
+                "无法启动 Multiwfn",
+                FileNotFoundError(multi_raw or "Multiwfn.exe"),
+                stage="启动 Multiwfn",
+                program="Multiwfn",
+                file_path=multi_raw or None,
+            )
             return
         multi = multi.resolve()
         self.scan_directories = [output_dir, self.source_path.parent]
@@ -472,13 +482,15 @@ class DirectWorkflowPage(QWidget):
             )
         except OSError as exc:
             self.multiwfn_process = None
-            QMessageBox.critical(self, "无法启动 Multiwfn", str(exc))
+            qt_feedback.show_error(
+                self, "无法启动 Multiwfn", exc, stage="启动 Multiwfn", program="Multiwfn", file_path=multi
+            )
             return
         self.process_timer.start()
         self.start_button.setEnabled(False)
         self.start_button.setText("等待 Multiwfn 完成…")
         self.stop_button.show()
-        self.back_button.setEnabled(False)
+        self._set_inputs_locked(True)
         self.manual_cube_button.hide()
         if str(self.style_data.get("surface_mode") or "signed") == "volume_mapped":
             self._set_status(
@@ -513,6 +525,7 @@ class DirectWorkflowPage(QWidget):
             path for path in after_intermediates if path not in self.before_intermediates
         )
         if self.cancel_requested:
+            self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
             self.start_button.setText("打开 Multiwfn 并继续")
             self._set_status("本次 Multiwfn 工作流已停止，已有结果文件没有被删除。")
@@ -521,6 +534,7 @@ class DirectWorkflowPage(QWidget):
 
         changed = self._changed_cubes()
         if not changed:
+            self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
             self.start_button.setText("重新打开 Multiwfn")
             self.manual_cube_button.show()
@@ -544,6 +558,7 @@ class DirectWorkflowPage(QWidget):
                 False,
             )
             if not accepted:
+                self._set_inputs_locked(False)
                 self.start_button.setEnabled(True)
                 self.start_button.setText("重新打开 Multiwfn")
                 self.manual_cube_button.show()
@@ -557,9 +572,10 @@ class DirectWorkflowPage(QWidget):
             output_dir = self._validated_output_dir()
             iso_value = self._validated_iso()
         except (OSError, ValueError) as exc:
+            self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
             self.start_button.setText("在 VMD 中绘图")
-            QMessageBox.warning(self, "无法继续到 VMD", str(exc))
+            qt_feedback.show_error(self, "无法继续到 VMD", exc, stage="检查 VMD 绘图设置")
             return
         self._launch_vmd(selected, iso_value, output_dir)
 
@@ -576,7 +592,7 @@ class DirectWorkflowPage(QWidget):
             output_dir = self._validated_output_dir()
             iso_value = self._validated_iso()
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "无法继续到 VMD", str(exc))
+            qt_feedback.show_error(self, "无法继续到 VMD", exc, stage="检查 VMD 绘图设置")
             return
         self.manual_cube_button.hide()
         self._launch_vmd(cube, iso_value, output_dir)
@@ -589,7 +605,15 @@ class DirectWorkflowPage(QWidget):
         vmd_raw = self.vmd_path_getter().strip()
         vmd = Path(vmd_raw).expanduser() if vmd_raw else Path()
         if not vmd_raw or not vmd.is_file():
-            QMessageBox.critical(self, "无法启动 VMD", "请先在左侧设置有效的 vmd.exe 路径。")
+            qt_feedback.show_error(
+                self,
+                "无法启动 VMD",
+                FileNotFoundError(vmd_raw or "vmd.exe"),
+                stage="启动 VMD",
+                program="VMD",
+                file_path=vmd_raw or None,
+            )
+            self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
             self.start_button.setText("在 VMD 中绘图")
             self.manual_cube_button.show()
@@ -609,6 +633,7 @@ class DirectWorkflowPage(QWidget):
                     "Cube (*.cub *.cube);;所有文件 (*)",
                 )
                 if not companion_raw:
+                    self._set_inputs_locked(False)
                     self.start_button.setEnabled(True)
                     self.start_button.setText("在 VMD 中绘图")
                     self.manual_cube_button.show()
@@ -625,7 +650,10 @@ class DirectWorkflowPage(QWidget):
             try:
                 grids_match = core.cube_grids_compatible(surface_cube, color_cube)
             except ValueError as exc:
-                QMessageBox.critical(self, "Cube 文件无效", str(exc))
+                qt_feedback.show_error(
+                    self, "Cube 文件无效", exc, stage="检查 Cube 空间网格", file_path=surface_cube
+                )
+                self._set_inputs_locked(False)
                 self.start_button.setEnabled(True)
                 self.start_button.setText("在 VMD 中绘图")
                 return
@@ -637,6 +665,7 @@ class DirectWorkflowPage(QWidget):
                 )
                 self.start_button.setEnabled(True)
                 self.start_button.setText("在 VMD 中绘图")
+                self._set_inputs_locked(False)
                 return
         tcl_path = Path(tempfile.gettempdir()) / f"autocube_direct_{uuid.uuid4().hex}.tcl"
         try:
@@ -661,7 +690,10 @@ class DirectWorkflowPage(QWidget):
             except OSError:
                 pass
             self.vmd_process = None
-            QMessageBox.critical(self, "无法启动 VMD", str(exc))
+            qt_feedback.show_error(
+                self, "无法启动 VMD", exc, stage="启动 VMD", program="VMD", file_path=vmd
+            )
+            self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
             self.start_button.setText("在 VMD 中绘图")
             self.manual_cube_button.show()
@@ -674,7 +706,7 @@ class DirectWorkflowPage(QWidget):
         self.start_button.setEnabled(False)
         self.start_button.setText("VMD 正在运行…")
         self.stop_button.show()
-        self.back_button.setEnabled(False)
+        self._set_inputs_locked(True)
         self.open_dir_button.setEnabled(True)
         self._set_status(
             f"VMD 已启动。使用 Render 保存图片时，输出将默认进入：{output_dir}"
@@ -701,7 +733,7 @@ class DirectWorkflowPage(QWidget):
                 self.vmd_process = None
                 self._cleanup_temp_tcl()
                 self.stop_button.hide()
-                self.back_button.setEnabled(True)
+                self._set_inputs_locked(False)
                 self.start_button.setEnabled(True)
                 self.start_button.setText("重新打开 VMD")
                 self._set_finish_actions_visible(True)
@@ -751,7 +783,7 @@ class DirectWorkflowPage(QWidget):
         try:
             output_dir = self._validated_output_dir()
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "目录不可用", str(exc))
+            qt_feedback.show_error(self, "目录不可用", exc, stage="打开结果目录")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
 
@@ -782,11 +814,11 @@ class DirectWorkflowPage(QWidget):
 
     def _finish_workflow(self, delete_intermediates: bool) -> None:
         if self.is_running():
-            QMessageBox.information(self, "工作流运行中", "请先关闭或停止当前程序，再完成工作流。")
+            self._set_status("请先关闭或停止当前程序，再完成工作流。")
             return
 
         deleted: list[Path] = []
-        failed: list[tuple[Path, str]] = []
+        failed: list[tuple[Path, OSError]] = []
         if delete_intermediates:
             candidates = self._deletable_intermediates()
             if candidates:
@@ -808,14 +840,17 @@ class DirectWorkflowPage(QWidget):
                         path.unlink()
                         deleted.append(path)
                     except OSError as exc:
-                        failed.append((path, str(exc)))
+                        failed.append((path, exc))
 
         if failed:
-            details = "\n".join(f"{path.name}：{reason}" for path, reason in failed[:6])
-            QMessageBox.warning(
+            for path, error in failed:
+                self._append_log(f"中间文件未能删除：{path}（{error}）")
+            qt_feedback.show_error(
                 self,
                 "部分中间文件未能删除",
-                f"已删除 {len(deleted)} 个文件，另有 {len(failed)} 个文件删除失败：\n{details}",
+                failed[0][1],
+                stage=f"清理中间文件（已删除 {len(deleted)} 个，失败 {len(failed)} 个）",
+                file_path=failed[0][0],
             )
         elif delete_intermediates:
             self._append_log(f"工作流已完成，已删除 {len(deleted)} 个本次中间文件。")
@@ -842,6 +877,7 @@ class DirectWorkflowPage(QWidget):
         self._set_finish_actions_visible(False)
         self.open_dir_button.setEnabled(False)
         self.back_button.setEnabled(True)
+        self._set_inputs_locked(False)
         self.start_button.setEnabled(False)
         self.start_button.setText("开始直接绘图")
         self._set_status("请选择或拖入一个文件。")
@@ -850,9 +886,18 @@ class DirectWorkflowPage(QWidget):
 
     def _request_back(self) -> None:
         if self.is_running():
-            QMessageBox.information(self, "工作流运行中", "请先停止当前工作流，再返回绘图方案。")
+            self._set_status("请先停止当前工作流，再返回绘图方案。")
             return
         self.backRequested.emit()
+
+    def _set_inputs_locked(self, locked: bool) -> None:
+        """运行期间只锁定会改变本轮结果的输入，状态和停止操作仍可用。"""
+        hint = "当前任务运行中，停止或完成后可以修改。" if locked else ""
+        for widget in (self.change_style_button, self.source_card, self.settings_card):
+            widget.setEnabled(not locked)
+            widget.setToolTip(hint)
+        self.back_button.setEnabled(not locked)
+        self.back_button.setToolTip(hint)
 
     def _set_status(self, text: str) -> None:
         self.status_label.setText(text)

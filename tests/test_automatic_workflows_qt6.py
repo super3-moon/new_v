@@ -171,6 +171,20 @@ class AutomaticWorkflowInterfaceTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_changed_settings_offer_inline_trial_rerun(self) -> None:
+        window = MainWindow()
+        try:
+            page = window.automation_page
+            page._trial_input = "sample.fchk"
+            page._trial_signature = "completed-trial"
+            page._invalidate_trial()
+            self.assertFalse(page.continue_button.isHidden())
+            self.assertEqual(page.continue_button.text(), "重新试运行")
+            self.assertIn("设置已变化", page.run_summary_label.text())
+            self.assertEqual(page.run_state_badge.text(), "需要重新试运行")
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

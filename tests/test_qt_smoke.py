@@ -469,6 +469,15 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             with mock.patch.object(page, "_start_run") as start_run:
                 page._continue_full_batch()
                 start_run.assert_called_once_with(False)
+
+            page.sequence_editor.set_text(page.sequence_editor.text() + "\nq")
+            self.app.processEvents()
+            self.assertTrue(page.continue_batch_button.isVisible())
+            self.assertEqual(page.continue_batch_button.text(), "重新试运行")
+            self.assertIn("设置已变化", page.run_summary_label.text())
+            with mock.patch.object(page, "_start_run") as start_run:
+                page._continue_full_batch()
+                start_run.assert_called_once_with(True)
         finally:
             window.close()
 

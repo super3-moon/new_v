@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import automatic_workflows as automation
+import qt_feedback
+import user_feedback
 import vmd_style_tool as core
 from orbital_diagram_qt6 import OrbitalDiagramPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
@@ -428,7 +430,7 @@ class AutomationStyleDialog(QDialog):
         try:
             style, rep0, selection_text = self._selection_parts()
         except ValueError as exc:
-            QMessageBox.warning(self, "尚未选择方案", str(exc))
+            self.selection_label.setText(str(exc))
             return
         StyleParameterDialog(style, rep0, selection_text, self).exec()
 
@@ -436,7 +438,7 @@ class AutomationStyleDialog(QDialog):
         try:
             self._selection_parts()
         except ValueError as exc:
-            QMessageBox.warning(self, "无法应用", str(exc))
+            self.selection_label.setText(str(exc))
             return
         self.accept()
 
@@ -1096,7 +1098,7 @@ class AutomaticWorkflowsPage(QWidget):
 
     def _choose_style(self) -> None:
         if self.is_running():
-            QMessageBox.information(self, "任务运行中", "请先停止当前任务，再更换绘图方案。")
+            self.style_meta_label.setText("当前任务运行中，停止或完成后可以修改绘图方案。")
             return
         dialog = AutomationStyleDialog(self.style_snapshot, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -1124,7 +1126,7 @@ class AutomaticWorkflowsPage(QWidget):
     def _view_style_parameters(self) -> None:
         style = self.style_snapshot.get("style") or {}
         if not style:
-            QMessageBox.information(self, "尚未选择方案", "请先选择一个绘图方案。")
+            self.style_meta_label.setText("请先选择一个绘图方案。")
             return
         StyleParameterDialog(
             copy.deepcopy(style),
@@ -1160,7 +1162,7 @@ class AutomaticWorkflowsPage(QWidget):
 
     def _append_files(self, paths: Iterable[Path]) -> None:
         if self.is_running():
-            QMessageBox.information(self, "任务运行中", "请先停止当前任务，再修改文件列表。")
+            self.run_summary_label.setText("当前任务运行中，停止或完成后可以修改文件列表。")
             return
         existing = {os.path.normcase(str(path)) for path in self.files}
         ignored = 0
@@ -1381,10 +1383,23 @@ class AutomaticWorkflowsPage(QWidget):
     def _invalidate_trial(self) -> None:
         if self.is_running():
             return
+        needs_retrial = bool(
+            self._trial_input
+            or self._trial_signature
+            or getattr(self, "_continue_requires_retrial", False)
+        )
         self._trial_input = ""
         self._trial_signature = ""
         if hasattr(self, "continue_button"):
-            self.continue_button.hide()
+            if needs_retrial:
+                self._continue_requires_retrial = True
+                self._set_run_state("需要重新试运行", "warning")
+                self.run_summary_label.setText("文件或绘图设置已变化，请用当前设置重新试运行首个文件。")
+                self.continue_button.setText("重新试运行")
+                self.continue_button.setToolTip("使用当前文件和绘图设置重新试运行。")
+                self.continue_button.show()
+            else:
+                self.continue_button.hide()
 
     def _populate_queue(self, files: list[Path]) -> None:
         self.last_result = {}
@@ -1418,20 +1433,22 @@ class AutomaticWorkflowsPage(QWidget):
         try:
             files, output_root, multi, vmd, settings = self._validated_inputs()
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "无法开始", str(exc))
+            qt_feedback.show_error(self, "无法开始", exc, stage="检查自动化流程设置")
             return
         if files_override is not None:
             files = list(files_override)
         elif trial:
             files = files[:1]
         if not files:
-            QMessageBox.information(self, "无需继续", "没有尚未运行的文件。")
+            self.run_summary_label.setText("没有尚未运行的文件。")
             return
 
         worker_files = list(files)
         display_files = self._enabled_files() if resume_manifest is not None else worker_files
         self._run_files = display_files
         self._run_mode = "trial" if trial else "batch"
+        if trial:
+            self._continue_requires_retrial = False
         self._cancel_requested = False
         self._populate_queue(display_files)
         if resume_manifest is not None and self._trial_input:
@@ -1457,6 +1474,8 @@ class AutomaticWorkflowsPage(QWidget):
         self.trial_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.open_results_button.setEnabled(False)
+        self.configuration_scroll.setEnabled(False)
+        self.configuration_scroll.setToolTip("当前任务运行中，停止或完成后可以修改。")
         self.page_stack.setCurrentIndex(2)
         self.settingsChanged.emit(
             {
@@ -1622,10 +1641,13 @@ class AutomaticWorkflowsPage(QWidget):
         self.cancel_button.setEnabled(False)
         self.trial_button.setEnabled(True)
         self.start_button.setEnabled(True)
+        self.configuration_scroll.setEnabled(True)
+        self.configuration_scroll.setToolTip("")
         if error is not None:
+            friendly = user_feedback.friendly_error_text(error, stage="运行表面静电势流程")
             self._set_run_state("运行失败", "failed")
-            self.run_summary_label.setText(str(error))
-            self._append_log(f"[错误] {error}")
+            self.run_summary_label.setText(friendly)
+            self._append_log(f"[错误] {friendly}")
             return
 
         self.last_result = dict(result) if isinstance(result, dict) else {}
@@ -1710,13 +1732,23 @@ class AutomaticWorkflowsPage(QWidget):
                 if os.path.normcase(str(path)) != self._trial_input
             ]
             if remaining:
+                self._continue_requires_retrial = False
                 self.continue_button.setText(f"试运行通过，继续剩余 {len(remaining)} 个文件")
+                self.continue_button.setToolTip("复用首文件结果，继续处理其余文件。")
                 self.continue_button.show()
 
     def _continue_after_trial(self) -> None:
         if not self._trial_input or self._trial_signature != self._configuration_signature():
-            self.continue_button.hide()
-            QMessageBox.information(self, "需要重新试运行", "文件或流程设置已经变化，请重新执行首文件试运行。")
+            if getattr(self, "_continue_requires_retrial", False):
+                self._continue_requires_retrial = False
+                self._start_run(True)
+                return
+            self._continue_requires_retrial = True
+            self._set_run_state("需要重新试运行", "warning")
+            self.run_summary_label.setText("绘图设置已经变化，需要重新试运行首个文件。")
+            self.continue_button.setText("重新试运行")
+            self.continue_button.show()
+            self.continue_button.setToolTip("使用当前文件和绘图设置重新试运行首个文件。")
             return
         remaining = [
             path
@@ -1725,9 +1757,17 @@ class AutomaticWorkflowsPage(QWidget):
         ]
         manifest = Path(str(self.last_result.get("manifest") or ""))
         if not manifest.is_file():
-            self.continue_button.hide()
-            QMessageBox.information(self, "无法继续", "首文件试运行记录不存在，请重新试运行。")
+            if getattr(self, "_continue_requires_retrial", False):
+                self._continue_requires_retrial = False
+                self._start_run(True)
+                return
+            self._continue_requires_retrial = True
+            self._set_run_state("需要重新试运行", "warning")
+            self.run_summary_label.setText("首文件试运行记录不存在，需要重新试运行。")
+            self.continue_button.setText("重新试运行")
+            self.continue_button.show()
             return
+        self._continue_requires_retrial = False
         self._start_run(False, remaining, resume_manifest=manifest)
 
     def _append_log(self, text: str) -> None:
@@ -1808,13 +1848,13 @@ class AutomaticWorkflowsPage(QWidget):
             return
         job = self._selected_job_result()
         if not job or not job.get("can_retry_drawing"):
-            QMessageBox.information(self, "无法重试", "选中的任务没有可直接复用的绘图数据。")
+            self.selected_result_label.setText("选中的任务没有可直接复用的绘图数据。")
             return
         manifest = Path(str(self.last_result.get("manifest") or ""))
         vmd_raw = self.vmd_path_getter().strip()
         vmd = Path(vmd_raw).expanduser() if vmd_raw else Path()
         if not manifest.is_file() or not vmd_raw or not vmd.is_file():
-            QMessageBox.warning(self, "无法重试", "运行记录或 vmd.exe 路径不可用。")
+            self.selected_result_label.setText("运行记录或 vmd.exe 路径不可用，无法重试绘图。")
             return
         self._run_mode = "retry"
         self._cancel_requested = False
@@ -1826,6 +1866,8 @@ class AutomaticWorkflowsPage(QWidget):
         self.trial_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.retry_drawing_button.setEnabled(False)
+        self.configuration_scroll.setEnabled(False)
+        self.configuration_scroll.setToolTip("当前任务运行中，停止或完成后可以修改。")
         self._set_run_state("正在重试绘图", "running")
         self._append_log("仅重试 VMD 绘图，不重新运行 Multiwfn。")
         self.thread = QThread(self)
@@ -1848,8 +1890,14 @@ class AutomaticWorkflowsPage(QWidget):
         self.cancel_button.setEnabled(False)
         self.trial_button.setEnabled(True)
         self.start_button.setEnabled(True)
+        self.configuration_scroll.setEnabled(True)
+        self.configuration_scroll.setToolTip("")
         if error is not None or not isinstance(result, dict):
-            message = str(error or "重试绘图失败。")
+            message = user_feedback.friendly_error_text(
+                error or RuntimeError("重试绘图失败。"),
+                stage="重试 VMD 绘图",
+                program="VMD",
+            )
             self._set_run_state("重试失败", "failed")
             self._append_log(f"[错误] {message}")
             self._sync_selected_result()
@@ -1892,7 +1940,8 @@ class AutomaticWorkflowsPage(QWidget):
     def _open_results(self) -> None:
         path = Path(self.last_run_dir) if self.last_run_dir else Path(self.output_dir_edit.text().strip())
         if not str(path) or not path.exists():
-            QMessageBox.information(self, "结果目录不可用", "尚未生成可打开的结果目录。")
+            self.run_summary_label.setText("尚未生成可打开的结果目录。")
+            self.open_results_button.setEnabled(False)
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
