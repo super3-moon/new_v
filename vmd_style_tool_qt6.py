@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 import vmd_style_tool as core
+import qt_feedback
 from automatic_workflows_qt6 import AutomaticWorkflowsPage
 from direct_workflow_qt6 import DirectWorkflowPage
 from multiwfn_batch_qt6 import MultiwfnBatchPage
@@ -2658,7 +2659,7 @@ class MainWindow(QMainWindow):
         try:
             style, rep0_commands, selection_text = self._current_style_selection()
         except ValueError as exc:
-            QMessageBox.warning(self, "无法开始直接绘图", str(exc))
+            qt_feedback.show_error(self, "无法开始直接绘图", exc, stage="选择绘图方案")
             return
         self.direct_page.configure_style(style, rep0_commands, selection_text)
         self._set_page_chrome(
@@ -2893,8 +2894,8 @@ class MainWindow(QMainWindow):
     def _delete_selected_custom_style(self) -> None:
         style = self._current_custom_style_for_delete()
         if not style:
-            QMessageBox.information(self, "无法删除", "请选择一个自定义风格。")
             self._sync_delete_custom_button()
+            self.statusBar().showMessage("请先选择一个自定义风格。", 4000)
             return
 
         style_id = str(style.get("id") or "")
@@ -2911,7 +2912,7 @@ class MainWindow(QMainWindow):
 
         removed = core.delete_custom_style(style_id)
         if removed is None:
-            QMessageBox.information(self, "删除失败", "没有找到这个自定义风格，列表将刷新。")
+            self.statusBar().showMessage("没有找到这个自定义风格，列表已刷新。", 4000)
         else:
             self._log(f"已删除自定义风格：{style_name}")
 
@@ -2922,7 +2923,7 @@ class MainWindow(QMainWindow):
         self._refresh_styles()
         self._show_style_selection()
         if removed is not None:
-            QMessageBox.information(self, "删除成功", f"已删除：{style_name}")
+            qt_feedback.show_toast(self, f"已删除自定义风格：{style_name}")
 
     def _on_bundle_picked(self, style_id: str) -> None:
         self.selected_bundle_id = style_id
@@ -2946,7 +2947,7 @@ class MainWindow(QMainWindow):
         try:
             style, rep0_commands, selection_text = self._current_style_selection()
         except ValueError as exc:
-            QMessageBox.warning(self, "无法查看参数", str(exc))
+            qt_feedback.show_error(self, "无法查看参数", exc, stage="读取绘图方案")
             return
         dialog = StyleParameterDialog(style, rep0_commands, selection_text, self)
         dialog.exec()
@@ -2955,7 +2956,7 @@ class MainWindow(QMainWindow):
         try:
             core.upsert_custom_style(dialog.saved_style)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "无法保存风格", str(exc))
+            qt_feedback.show_error(self, "无法保存风格", exc, stage="保存自定义风格")
             return
         saved_id = str(dialog.saved_style["id"])
         saved_name = str(dialog.saved_style["name"])
@@ -2968,13 +2969,13 @@ class MainWindow(QMainWindow):
         else:
             self._show_style_selection()
         self._log(f"已保存风格参数：{saved_name}")
-        QMessageBox.information(self, "保存成功", f"已保存到自定义风格：{saved_name}")
+        qt_feedback.show_toast(self, f"已保存到自定义风格：{saved_name}")
 
     def _export_script_dialog(self) -> None:
         try:
             self._current_style_selection()
         except ValueError as exc:
-            QMessageBox.warning(self, "无法导出脚本", str(exc))
+            qt_feedback.show_error(self, "无法导出脚本", exc, stage="读取绘图方案")
             return
         suggested_dir = Path(self.out_dir_edit.text().strip() or core.ROOT).expanduser()
         suggested = suggested_dir / self._auto_output_name()
@@ -3040,7 +3041,7 @@ class MainWindow(QMainWindow):
 
     def _pick_ai_image(self) -> None:
         if self.ai_thread is not None and self.ai_thread.isRunning():
-            QMessageBox.information(self, "识别进行中", "请等待当前识别完成后再更换图片。")
+            qt_feedback.show_toast(self, "当前正在识别图片，完成后即可更换。", timeout_ms=3000)
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -3054,7 +3055,7 @@ class MainWindow(QMainWindow):
         try:
             self.ai_crop_label.load_image(path)
         except Exception as exc:
-            QMessageBox.critical(self, "读取失败", str(exc))
+            qt_feedback.show_error(self, "读取失败", exc, stage="读取论文图片", file_path=path)
             return
         self.ai_image_edit.setText(path)
         self.ai_current_guess = None
@@ -3402,7 +3403,7 @@ class MainWindow(QMainWindow):
         try:
             image_for_api = self._current_ai_image_for_api()
         except Exception as exc:
-            QMessageBox.critical(self, "识别失败", str(exc))
+            qt_feedback.show_error(self, "识别失败", exc, stage="准备识别图片")
             return
 
         api_key = self.ai_key_edit.text().strip()
@@ -3412,7 +3413,7 @@ class MainWindow(QMainWindow):
         try:
             measured = self._measure_image_style(image_for_api)
         except Exception as exc:
-            QMessageBox.critical(self, "识别失败", str(exc))
+            qt_feedback.show_error(self, "识别失败", exc, stage="分析图片风格")
             return
 
         self._log("正在识别图片风格……")
@@ -3479,12 +3480,12 @@ class MainWindow(QMainWindow):
         try:
             guess = self._guess_from_result_panel()
         except Exception as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            qt_feedback.show_error(self, "保存失败", exc, stage="读取识别结果")
             return
 
         image_path = Path(self.ai_image_edit.text().strip())
         if not image_path.exists():
-            QMessageBox.critical(self, "保存失败", "请先选择有效的图片。")
+            qt_feedback.show_toast(self, "请先选择有效的图片。")
             return
 
         try:
@@ -3509,7 +3510,7 @@ class MainWindow(QMainWindow):
             style["image"] = image_file
             core.upsert_custom_style(style)
         except Exception as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            qt_feedback.show_error(self, "保存失败", exc, stage="保存 AI 风格")
             return
 
         self.selected_bundle_id = style["id"]
@@ -3517,7 +3518,7 @@ class MainWindow(QMainWindow):
         self._refresh_styles()
         self._show_style_selection()
         self._log(f"已保存 AI 图片风格：{style['name']}")
-        QMessageBox.information(self, "保存成功", f"已保存：{style['name']}")
+        qt_feedback.show_toast(self, f"已保存自定义风格：{style['name']}")
 
     def _scan_paths(self) -> None:
         found = core.find_path_candidates()
@@ -3540,13 +3541,13 @@ class MainWindow(QMainWindow):
     def _import_custom_style(self) -> None:
         state_path = Path(self.state_file_edit.text().strip())
         if not state_path.exists():
-            QMessageBox.critical(self, "导入失败", "请先选择有效的 Save State 文件。")
+            qt_feedback.show_toast(self, "请先选择有效的 Save State 文件。")
             return
 
         try:
             state_text = self._read_state_text(state_path)
         except Exception as exc:
-            QMessageBox.critical(self, "导入失败", f"读取文件失败：{exc}")
+            qt_feedback.show_error(self, "导入失败", exc, stage="读取 Save State", file_path=state_path)
             return
 
         custom_name = self.custom_name_edit.text().strip() or state_path.stem
@@ -3554,7 +3555,7 @@ class MainWindow(QMainWindow):
         try:
             style = core.parse_save_state_to_custom_style(state_text, custom_name, custom_desc)
         except Exception as exc:
-            QMessageBox.critical(self, "导入失败", f"解析 save state 失败：{exc}")
+            qt_feedback.show_error(self, "导入失败", exc, stage="解析 Save State", file_path=state_path)
             return
 
         cover_text = self.cover_file_edit.text().strip()
@@ -3565,7 +3566,7 @@ class MainWindow(QMainWindow):
                 if ext == ".jpeg":
                     ext = ".jpg"
                 if ext not in {".png", ".jpg", ".webp", ".gif"}:
-                    QMessageBox.critical(self, "导入失败", "封面图格式不支持。")
+                    qt_feedback.show_toast(self, "封面图格式不支持，请选择 PNG、JPG、WEBP 或 GIF。")
                     return
                 image_file = f"{style['id']}_cover{ext}"
                 core.write_bytes_atomic(core.STYLE_DIR / image_file, cover_path.read_bytes())
@@ -3578,7 +3579,7 @@ class MainWindow(QMainWindow):
         self._refresh_styles()
         self._show_style_selection()
         self._log(f"已导入自定义风格：{style['name']}")
-        QMessageBox.information(self, "导入成功", f"已导入：{style['name']}")
+        qt_feedback.show_toast(self, f"已导入自定义风格：{style['name']}")
 
     def _generate_script(self) -> None:
         multi = self.multi_edit.text().strip()
@@ -3589,16 +3590,20 @@ class MainWindow(QMainWindow):
             self.out_edit.setText(out_name)
 
         if not multi or not Path(multi).exists():
-            QMessageBox.critical(self, "生成失败", "Multiwfn.exe 路径无效。")
+            qt_feedback.show_error(
+                self, "生成失败", FileNotFoundError(multi or "Multiwfn.exe"), stage="生成脚本", program="Multiwfn", file_path=multi or None
+            )
             return
         if not vmd or not Path(vmd).exists():
-            QMessageBox.critical(self, "生成失败", "vmd.exe 路径无效。")
+            qt_feedback.show_error(
+                self, "生成失败", FileNotFoundError(vmd or "vmd.exe"), stage="生成脚本", program="VMD", file_path=vmd or None
+            )
             return
 
         try:
             style, rep0_commands, _ = self._current_style_selection()
         except ValueError as exc:
-            QMessageBox.critical(self, "生成失败", str(exc))
+            qt_feedback.show_error(self, "生成失败", exc, stage="读取绘图方案")
             return
 
         selected_skeleton = self.selected_skeleton_id
@@ -3617,7 +3622,7 @@ class MainWindow(QMainWindow):
             output_dir.mkdir(parents=True, exist_ok=True)
             output_dir = output_dir.resolve()
         except OSError as exc:
-            QMessageBox.critical(self, "生成失败", f"保存目录不可用：{exc}")
+            qt_feedback.show_error(self, "生成失败", exc, stage="创建脚本目录", file_path=output_dir)
             return
         out_path = output_dir / safe_out
         script = core.build_cmd_script(style, multi, vmd, rep0_commands=rep0_commands)
@@ -3638,7 +3643,7 @@ class MainWindow(QMainWindow):
         )
         self.out_edit.setText(safe_out)
         self._log(f"已生成脚本：{out_path}")
-        QMessageBox.information(self, "生成成功", f"脚本已生成：\n{out_path}")
+        qt_feedback.show_toast(self, f"脚本已生成：{out_path.name}", timeout_ms=5000)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if hasattr(self, "direct_page") and self.direct_page.is_running():

@@ -1717,6 +1717,7 @@ class OrbitalDiagramRunner:
         )
         total = len(refs)
         render_start, render_end = STAGE_PROGRESS[STAGE_RENDER]
+        pending: list[dict[str, object]] = []
         for number, ref in enumerate(refs, 1):
             if self._cancel_event.is_set():
                 raise _Cancelled
@@ -1736,63 +1737,88 @@ class OrbitalDiagramRunner:
             safe = _orbital_artifact_stem(ref)
             tga = render_dir / f"{safe}.tga"
             png = render_dir / f"{safe}.png"
-            tcl = render_dir / f"{safe}.vmd"
-            _write_text_atomic(
-                tcl,
-                orbital_vmd.build_batch_render_tcl(
-                    job.cubes[key],
-                    tga,
-                    state,
-                    width=self.plan.settings.width,
-                    height=self.plan.settings.height,
-                    native_state_path=native_state if use_native_state else None,
-                    reference_cube_path=reference_cube if use_native_state else None,
-                ),
+            pending.append(
+                {
+                    "token": key,
+                    "cube_path": job.cubes[key],
+                    "output_path": tga,
+                    "png_path": png,
+                    "position": number,
+                    "total": total,
+                    "ref": ref,
+                }
             )
-            self._emit(
-                "orbital_stage",
-                index=job.index,
-                job_id=job.id,
-                wavefunction_path=str(job.pair.wavefunction_path),
-                orbital=ref.to_dict(),
-                current=number,
-                total=total,
-                stage=STAGE_RENDER,
-                status=STATUS_RUNNING,
-            )
-            local_before = render_start + (render_end - render_start) * (number - 1) / max(1, total)
-            local_after = render_start + (render_end - render_start) * number / max(1, total)
-            self._emit_progress(
-                job,
-                local_before,
-                ceiling_local=max(local_before, local_after - 0.5),
-                stage=STAGE_RENDER,
-                message=f"正在渲染 {ref.label}（{number}/{total}）",
-            )
-            return_code, reason = self._run_process(
-                [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(tcl)],
-                cwd=render_dir,
-                env=os.environ.copy(),
-                stdin_text=None,
-                timeout_seconds=self.plan.settings.vmd_timeout_seconds,
-                log_path=render_dir / f"{safe}.log",
-                source="VMD",
-                job=job,
-                hide_window=True,
-            )
-            if reason == "cancelled":
-                job.render_status[key] = STATUS_CANCELLED
-                raise _Cancelled
-            if reason == "timeout":
-                job.render_status[key] = STATUS_TIMEOUT
-                raise _TimedOut(f"VMD 渲染 {ref.label} 超时；已完成图片可继续复用。")
-            if return_code != 0:
+
+        if not pending:
+            return
+
+        tcl = render_dir / "orbital_batch_render.vmd"
+        _write_text_atomic(
+            tcl,
+            orbital_vmd.build_multi_batch_render_tcl(
+                pending,
+                state,
+                width=self.plan.settings.width,
+                height=self.plan.settings.height,
+                native_state_path=native_state if use_native_state else None,
+                reference_cube_path=reference_cube if use_native_state else None,
+            ),
+        )
+        by_token = {str(item["token"]): item for item in pending}
+        completed: set[str] = set()
+        failed_token = ""
+        marker_pattern = re.compile(
+            r"^MolecularStudio: orbital batch (begin|done|failed)\t(\d+)\t(\d+)\t([A-Za-z0-9_.:-]+)$"
+        )
+
+        def handle_render_marker(text: str) -> None:
+            nonlocal failed_token
+            match = marker_pattern.match(text)
+            if match is None:
+                return
+            action, number_text, total_text, token = match.groups()
+            item = by_token.get(token)
+            if item is None:
+                return
+            number = int(number_text)
+            marker_total = int(total_text)
+            ref = item["ref"]
+            assert isinstance(ref, orbital_data.OrbitalRef)
+            key = str(item["token"])
+            local_before = render_start + (render_end - render_start) * (number - 1) / max(1, marker_total)
+            local_after = render_start + (render_end - render_start) * number / max(1, marker_total)
+            if action == "begin":
+                job.render_status[key] = STATUS_RUNNING
+                self._emit(
+                    "orbital_stage",
+                    index=job.index,
+                    job_id=job.id,
+                    wavefunction_path=str(job.pair.wavefunction_path),
+                    orbital=ref.to_dict(),
+                    current=number,
+                    total=marker_total,
+                    stage=STAGE_RENDER,
+                    status=STATUS_RUNNING,
+                )
+                self._emit_progress(
+                    job,
+                    local_before,
+                    ceiling_local=max(local_before, local_after - 0.5),
+                    stage=STAGE_RENDER,
+                    message=f"正在渲染 {ref.label}（{number}/{marker_total}）",
+                )
+                return
+            if action == "failed":
+                failed_token = key
                 job.render_status[key] = STATUS_FAILED
-                raise OrbitalDiagramError(f"VMD 渲染 {ref.label} 失败（退出码 {return_code}）。")
-            orbital_vmd.validate_render_output(tga)
-            self._convert_to_png(tga, png)
-            job.images[key] = str(png.resolve())
+                return
+            tga_path = Path(str(item["output_path"]))
+            png_path = Path(str(item["png_path"]))
+            orbital_vmd.validate_render_output(tga_path)
+            self._convert_to_png(tga_path, png_path)
+            job.images[key] = str(png_path.resolve())
             job.render_status[key] = STATUS_SUCCESS
+            completed.add(key)
             self._write_manifest()
             self._emit(
                 "orbital_stage",
@@ -1801,17 +1827,56 @@ class OrbitalDiagramRunner:
                 wavefunction_path=str(job.pair.wavefunction_path),
                 orbital=ref.to_dict(),
                 current=number,
-                total=total,
+                total=marker_total,
                 stage=STAGE_RENDER,
                 status=STATUS_SUCCESS,
-                image_path=str(png.resolve()),
+                image_path=str(png_path.resolve()),
             )
             self._emit_progress(
                 job,
                 local_after,
                 ceiling_local=local_after,
                 stage=STAGE_RENDER,
-                message=f"已完成 {ref.label}（{number}/{total}）",
+                message=f"已完成 {ref.label}（{number}/{marker_total}）",
+            )
+
+        return_code, reason = self._run_process(
+            [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(tcl)],
+            cwd=render_dir,
+            env=os.environ.copy(),
+            stdin_text=None,
+            timeout_seconds=min(
+                86400,
+                max(
+                    self.plan.settings.vmd_timeout_seconds,
+                    self.plan.settings.vmd_timeout_seconds * len(pending),
+                ),
+            ),
+            log_path=render_dir / "orbital_batch_render.log",
+            source="VMD",
+            job=job,
+            hide_window=True,
+            line_callback=handle_render_marker,
+        )
+        incomplete = [str(item["token"]) for item in pending if str(item["token"]) not in completed]
+        if reason == "cancelled":
+            for key in incomplete:
+                if job.render_status.get(key) != STATUS_FAILED:
+                    job.render_status[key] = STATUS_CANCELLED
+            raise _Cancelled
+        if reason == "timeout":
+            for key in incomplete:
+                job.render_status[key] = STATUS_TIMEOUT
+            raise _TimedOut("VMD 批量渲染超时；已完成图片可继续复用。")
+        if return_code != 0 or incomplete:
+            key = failed_token or (incomplete[0] if incomplete else "")
+            item = by_token.get(key)
+            ref = item.get("ref") if item else None
+            label = ref.label if isinstance(ref, orbital_data.OrbitalRef) else "当前轨道"
+            if key:
+                job.render_status[key] = STATUS_FAILED
+            raise OrbitalDiagramError(
+                f"VMD 批量渲染在 {label} 处失败（退出码 {return_code}）；已完成图片可继续复用。"
             )
 
     @staticmethod
@@ -2076,6 +2141,7 @@ class OrbitalDiagramRunner:
         hide_window: bool,
         show_window: bool = False,
         completion_markers: Mapping[str, Path] | None = None,
+        line_callback: Callable[[str], None] | None = None,
     ) -> tuple[int, str]:
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" and hide_window else 0
         encoding = locale.getpreferredencoding(False) or "utf-8"
@@ -2119,6 +2185,7 @@ class OrbitalDiagramRunner:
             next_window_check = started
             stream_finished = False
             reason = ""
+            callback_error: Exception | None = None
             markers = tuple(
                 (str(marker_reason), Path(marker_path))
                 for marker_reason, marker_path in (completion_markers or {}).items()
@@ -2156,6 +2223,14 @@ class OrbitalDiagramRunner:
                                 wavefunction_path=str(job.pair.wavefunction_path),
                                 source=source, text=text,
                             )
+                            if line_callback is not None:
+                                try:
+                                    line_callback(text)
+                                except Exception as exc:
+                                    callback_error = exc
+                                    reason = "callback_error"
+                                    if process.poll() is None:
+                                        self._terminate_process(process)
                     if self._cancel_event.is_set() and process.poll() is None:
                         reason = "cancelled"
                         self._terminate_process(process)
@@ -2184,7 +2259,10 @@ class OrbitalDiagramRunner:
                             reason = "timeout"
                             self._terminate_process(process)
             thread.join(timeout=1)
-            return process.wait(timeout=5), reason
+            return_code = process.wait(timeout=5)
+            if callback_error is not None:
+                raise callback_error
+            return return_code, reason
         finally:
             if process.stdout is not None:
                 process.stdout.close()

@@ -558,8 +558,9 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
             self.assertIn("viewpoint_confirmed", log.read_text(encoding="utf-8"))
 
             plain_log = root / "plain.log"
+            lines: list[str] = []
             return_code, reason = runner._run_process(
-                [sys.executable, "-c", "print('ok')"],
+                [sys.executable, "-c", "print('first'); print('second')"],
                 cwd=root,
                 env={},
                 stdin_text=None,
@@ -568,8 +569,10 @@ class OrbitalWorkflowRecoveryTests(GaussianFixtureMixin, unittest.TestCase):
                 source="test",
                 job=job,
                 hide_window=True,
+                line_callback=lines.append,
             )
             self.assertEqual((return_code, reason), (0, ""))
+            self.assertEqual(lines, ["first", "second"])
 
 
 class OrbitalVmdTests(unittest.TestCase):
@@ -776,6 +779,52 @@ class OrbitalVmdTests(unittest.TestCase):
             ),
             (900, 630),
         )
+
+    def test_multi_batch_script_renders_all_cubes_in_one_vmd_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cube_a = self._cube(root / "a.cub")
+            cube_b = self._cube(root / "b.cub")
+            state = self._state(cube_a)
+            script = orbital_vmd.build_multi_batch_render_tcl(
+                [
+                    {
+                        "token": "alpha:11",
+                        "cube_path": cube_a,
+                        "output_path": root / "a.tga",
+                        "position": 2,
+                        "total": 3,
+                    },
+                    {
+                        "token": "beta:12",
+                        "cube_path": cube_b,
+                        "output_path": root / "b.tga",
+                        "position": 3,
+                        "total": 3,
+                    },
+                ],
+                state,
+                width=900,
+                height=900,
+            )
+            self.assertEqual(script.count("proc _mo_unhex"), 1)
+            self.assertEqual(script.count("mol new $MO_CUBE type cube waitfor all"), 2)
+            self.assertEqual(script.count("\nquit\n"), 1)
+            self.assertIn(
+                "MolecularStudio: orbital batch begin\\t2\\t3\\talpha:11",
+                script,
+            )
+            self.assertIn(
+                "MolecularStudio: orbital batch done\\t3\\t3\\tbeta:12",
+                script,
+            )
+            self.assertEqual(
+                script.count(
+                    "foreach MO_OLD_MOL [molinfo list] { catch {mol delete $MO_OLD_MOL} }"
+                ),
+                4,
+            )
+            self.assertIn("render TachyonInternal $MO_OUTPUT", script)
 
     def test_scaleminmax_uses_two_numeric_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
