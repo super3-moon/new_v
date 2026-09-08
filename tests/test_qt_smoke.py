@@ -13,6 +13,7 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import vmd_style_tool as core
+import direct_workflow_qt6 as direct_workflow
 from multiwfn_recorder_qt6 import MultiwfnRecorderDialog
 from PySide6.QtCore import QProcess, Qt
 from PySide6.QtGui import QTextCursor
@@ -534,6 +535,95 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             page.process_timer.stop()
             page.vmd_process = None
             page.cleanup()
+        finally:
+            window.close()
+
+    def test_direct_workflow_loads_multiple_selected_cubes_in_one_vmd(self) -> None:
+        window = MainWindow()
+        try:
+            root = Path(self.temp_dir.name)
+            first = root / "orbital_1.cub"
+            second = root / "orbital_2.cub"
+            first.write_text("cube 1", encoding="utf-8")
+            second.write_text("cube 2", encoding="utf-8")
+            fake_vmd = root / "vmd.exe"
+            fake_vmd.write_bytes(b"")
+            window.vmd_edit.setText(str(fake_vmd))
+            window._show_direct_workflow()
+
+            page = window.direct_page
+            style = next(
+                item
+                for item in core.get_all_bundle_styles()
+                if str(item.get("surface_mode") or "signed") == "signed"
+            )
+            page.configure_style(style, None, "multi-cube test")
+            page.set_source_file(str(first))
+
+            fake_process = mock.Mock()
+            fake_process.poll.return_value = None
+            with mock.patch(
+                "direct_workflow_qt6.subprocess.Popen", return_value=fake_process
+            ) as popen:
+                page._launch_vmd([first, second], 0.05, root)
+
+            _, kwargs = popen.call_args
+            self.assertEqual(kwargs["env"]["CUBE_FILE_COUNT"], "2")
+            self.assertEqual(kwargs["env"]["CUBE_FILE"], str(first.resolve()))
+            self.assertEqual(kwargs["env"]["CUBE_FILE_2"], str(second.resolve()))
+            tcl = Path(popen.call_args.args[0][2]).read_text(encoding="utf-8")
+            self.assertIn("CUBE_FILE_$AUTO_CUBE_INDEX", tcl)
+            self.assertIn("mol new $AUTO_CUBE_FILE type cube waitfor all", tcl)
+
+            page.process_timer.stop()
+            page.vmd_process = None
+            page.cleanup()
+        finally:
+            window.close()
+
+    def test_detected_cube_selection_passes_every_checked_file_to_vmd(self) -> None:
+        window = MainWindow()
+        try:
+            root = Path(self.temp_dir.name)
+            source = root / "sample.fch"
+            first = root / "orbital_1.cub"
+            second = root / "orbital_2.cub"
+            for path in (source, first, second):
+                path.write_text("test", encoding="utf-8")
+            window._show_direct_workflow()
+            page = window.direct_page
+            page.set_source_file(str(source))
+            page.iso_edit.setText("0.05")
+
+            with (
+                mock.patch.object(page, "_changed_cubes", return_value=[first, second]),
+                mock.patch.object(
+                    page, "_select_detected_cubes", return_value=[first, second]
+                ),
+                mock.patch.object(page, "_launch_vmd") as launch,
+            ):
+                page._handle_multiwfn_finished(0)
+
+            launch.assert_called_once_with([first, second], 0.05, root.resolve())
+            self.assertEqual(page.cube_paths, [first, second])
+        finally:
+            window.close()
+
+    def test_detected_cube_dialog_allows_more_than_one_checked_file(self) -> None:
+        window = MainWindow()
+        try:
+            root = Path(self.temp_dir.name)
+            cubes = [root / "first.cub", root / "second.cub"]
+
+            def choose_both(dialog) -> int:
+                cube_list = dialog.findChild(direct_workflow.QListWidget)
+                self.assertIsNotNone(cube_list)
+                cube_list.item(1).setCheckState(Qt.CheckState.Checked)
+                return int(direct_workflow.QDialog.DialogCode.Accepted)
+
+            with mock.patch.object(direct_workflow.QDialog, "exec", new=choose_both):
+                selected = window.direct_page._select_detected_cubes(cubes)
+            self.assertEqual(selected, cubes)
         finally:
             window.close()
 
