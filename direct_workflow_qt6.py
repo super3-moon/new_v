@@ -12,12 +12,15 @@ import qt_feedback
 from PySide6.QtCore import QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -66,6 +69,48 @@ def file_snapshot(
 
 def cube_snapshot(directories: list[Path]) -> dict[Path, tuple[int, int]]:
     return file_snapshot(directories, CUBE_SUFFIXES)
+
+
+def _build_multi_cube_vmd_tcl(
+    style: dict, rep0_commands: list[str] | None, cube_count: int
+) -> str:
+    """Extend the existing direct-drawing script to load extra Cube molecules."""
+
+    script = core.build_vmd_tcl(style, rep0_commands=rep0_commands)
+    if cube_count <= 1:
+        return script
+
+    lines = script.rstrip("\n").splitlines()
+    load_line = "mol new $AUTO_CUBE_FILE type cube waitfor all"
+    surface_mode = str(style.get("surface_mode") or "signed")
+    end_line = (
+        "mol modmaterial 1 top $mater"
+        if surface_mode == "volume_mapped"
+        else "mol modmaterial 2 top $mater"
+    )
+    start = lines.index(load_line)
+    end = next(
+        index for index in range(start, len(lines)) if lines[index] == end_line
+    )
+    molecule_block = lines[start : end + 1]
+    extra_lines = [
+        "",
+        "# Load the additional Cube files selected in the direct workflow.",
+        "for {set AUTO_CUBE_INDEX 2} {$AUTO_CUBE_INDEX <= $::env(CUBE_FILE_COUNT)} {incr AUTO_CUBE_INDEX} {",
+        '    set AUTO_CUBE_ENV_NAME "CUBE_FILE_$AUTO_CUBE_INDEX"',
+        "    set AUTO_CUBE_FILE [file normalize [set ::env($AUTO_CUBE_ENV_NAME)]]",
+    ]
+    if surface_mode == "volume_mapped":
+        extra_lines.extend(
+            [
+                '    set AUTO_COLOR_ENV_NAME "COLOR_CUBE_FILE_$AUTO_CUBE_INDEX"',
+                "    set AUTO_COLOR_CUBE_FILE [file normalize [set ::env($AUTO_COLOR_ENV_NAME)]]",
+            ]
+        )
+    extra_lines.extend(f"    {line}" for line in molecule_block)
+    extra_lines.append("}")
+    lines[end + 1 : end + 1] = extra_lines
+    return "\n".join(lines) + "\n"
 
 
 class FileDropZone(QFrame):
@@ -148,6 +193,7 @@ class DirectWorkflowPage(QWidget):
         self.rep0_commands: list[str] | None = None
         self.source_path: Path | None = None
         self.cube_path: Path | None = None
+        self.cube_paths: list[Path] = []
         self.multiwfn_process: subprocess.Popen[bytes] | None = None
         self.vmd_process: subprocess.Popen[bytes] | None = None
         self.temp_tcl_path: Path | None = None
@@ -287,7 +333,7 @@ class DirectWorkflowPage(QWidget):
         self.open_dir_button.clicked.connect(self._open_output_dir)
         self.open_dir_button.setEnabled(False)
         footer_layout.addWidget(self.open_dir_button)
-        self.manual_cube_button = QPushButton("手动选择 Cube 并继续")
+        self.manual_cube_button = QPushButton("手动选择 Cube（可多选）")
         self.manual_cube_button.clicked.connect(self._manual_select_cube)
         self.manual_cube_button.hide()
         footer_layout.addWidget(self.manual_cube_button)
@@ -363,6 +409,7 @@ class DirectWorkflowPage(QWidget):
             self.scan_directories.clear()
         self.source_path = path
         self.cube_path = path if is_cube_file(path) else None
+        self.cube_paths = [path] if is_cube_file(path) else []
         self.output_dir_edit.setText(str(path.parent))
         self.open_dir_button.setEnabled(True)
         kind = "Cube 格点文件" if is_cube_file(path) else "由 Multiwfn 打开的输入文件"
@@ -441,11 +488,15 @@ class DirectWorkflowPage(QWidget):
             qt_feedback.show_error(self, "运行设置不完整", exc, stage="检查直接绘图设置")
             return
 
-        if self.cube_path is not None and self.cube_path.is_file():
-            self._launch_vmd(self.cube_path, iso_value, output_dir)
+        selected_cubes = [path for path in self.cube_paths if path.is_file()]
+        if selected_cubes:
+            self._launch_vmd(selected_cubes, iso_value, output_dir)
+        elif self.cube_path is not None and self.cube_path.is_file():
+            self._launch_vmd([self.cube_path], iso_value, output_dir)
         elif is_cube_file(self.source_path):
             self.cube_path = self.source_path
-            self._launch_vmd(self.source_path, iso_value, output_dir)
+            self.cube_paths = [self.source_path]
+            self._launch_vmd([self.source_path], iso_value, output_dir)
         else:
             self._launch_multiwfn(output_dir)
 
@@ -515,6 +566,75 @@ class DirectWorkflowPage(QWidget):
         )
         return changed
 
+    def _select_detected_cubes(self, candidates: list[Path]) -> list[Path] | None:
+        if len(candidates) <= 1:
+            return list(candidates)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("选择要载入的 Cube")
+        dialog.setMinimumWidth(680)
+        layout = QVBoxLayout(dialog)
+        instruction = QLabel(
+            f"本次检测到 {len(candidates)} 个 Cube。请勾选一个或多个，所选文件将同时载入 VMD："
+        )
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+
+        cube_list = QListWidget(dialog)
+        items: list[QListWidgetItem] = []
+        for index, path in enumerate(candidates):
+            item = QListWidgetItem(f"{path.name}    {path.parent}")
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if index == 0 else Qt.CheckState.Unchecked
+            )
+            cube_list.addItem(item)
+            items.append(item)
+        layout.addWidget(cube_list)
+
+        selection_row = QHBoxLayout()
+        select_all = QPushButton("全选")
+        clear_all = QPushButton("清除")
+        selection_row.addWidget(select_all)
+        selection_row.addWidget(clear_all)
+        selection_row.addStretch(1)
+        layout.addLayout(selection_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        confirm = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        confirm.setText("载入所选")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        layout.addWidget(buttons)
+
+        def set_all(state: Qt.CheckState) -> None:
+            for item in items:
+                item.setCheckState(state)
+
+        def refresh_confirm() -> None:
+            confirm.setEnabled(
+                any(item.checkState() == Qt.CheckState.Checked for item in items)
+            )
+
+        select_all.clicked.connect(lambda: set_all(Qt.CheckState.Checked))
+        clear_all.clicked.connect(lambda: set_all(Qt.CheckState.Unchecked))
+        cube_list.itemChanged.connect(lambda _item: refresh_confirm())
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        refresh_confirm()
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return [
+            Path(str(item.data(Qt.ItemDataRole.UserRole)))
+            for item in items
+            if item.checkState() == Qt.CheckState.Checked
+        ]
+
     def _handle_multiwfn_finished(self, exit_code: int) -> None:
         self.stop_button.hide()
         self.back_button.setEnabled(True)
@@ -546,28 +666,20 @@ class DirectWorkflowPage(QWidget):
             )
             return
 
-        selected = changed[0]
-        if len(changed) > 1:
-            choices = [f"{path.name}（{path.parent}）" for path in changed]
-            choice, accepted = QInputDialog.getItem(
-                self,
-                "选择要绘制的 Cube",
-                f"本次检测到 {len(changed)} 个 Cube，请选择一个：",
-                choices,
-                0,
-                False,
-            )
-            if not accepted:
-                self._set_inputs_locked(False)
-                self.start_button.setEnabled(True)
-                self.start_button.setText("重新打开 Multiwfn")
-                self.manual_cube_button.show()
-                self._set_status("尚未选择要绘制的 Cube。可以手动选择，或重新打开 Multiwfn。")
-                return
-            selected = changed[choices.index(choice)]
+        selected = self._select_detected_cubes(changed)
+        if not selected:
+            self._set_inputs_locked(False)
+            self.start_button.setEnabled(True)
+            self.start_button.setText("重新打开 Multiwfn")
+            self.manual_cube_button.show()
+            self._set_status("尚未选择要绘制的 Cube。可以手动选择，或重新打开 Multiwfn。")
+            return
 
-        self.cube_path = selected
-        self._append_log(f"已检测到 Cube：{selected}")
+        self.cube_paths = list(selected)
+        self.cube_path = selected[0]
+        self._append_log(
+            "已选择 Cube：" + "、".join(path.name for path in selected)
+        )
         try:
             output_dir = self._validated_output_dir()
             iso_value = self._validated_iso()
@@ -581,13 +693,17 @@ class DirectWorkflowPage(QWidget):
 
     def _manual_select_cube(self) -> None:
         current = self.output_dir_edit.text().strip()
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择要绘制的 Cube", current, "Cube (*.cub *.cube);;所有文件 (*)"
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择要绘制的 Cube（可多选）",
+            current,
+            "Cube (*.cub *.cube);;所有文件 (*)",
         )
-        if not path:
+        if not paths:
             return
-        cube = Path(path).resolve()
-        self.cube_path = cube
+        cubes = [Path(path).resolve() for path in paths]
+        self.cube_paths = cubes
+        self.cube_path = cubes[0]
         try:
             output_dir = self._validated_output_dir()
             iso_value = self._validated_iso()
@@ -595,13 +711,15 @@ class DirectWorkflowPage(QWidget):
             qt_feedback.show_error(self, "无法继续到 VMD", exc, stage="检查 VMD 绘图设置")
             return
         self.manual_cube_button.hide()
-        self._launch_vmd(cube, iso_value, output_dir)
+        self._launch_vmd(cubes, iso_value, output_dir)
 
     @staticmethod
     def _iso_text(value: float) -> str:
         return format(value, ".12g")
 
-    def _launch_vmd(self, cube: Path, iso_value: float, output_dir: Path) -> None:
+    def _launch_vmd(
+        self, cubes: list[Path], iso_value: float, output_dir: Path
+    ) -> None:
         vmd_raw = self.vmd_path_getter().strip()
         vmd = Path(vmd_raw).expanduser() if vmd_raw else Path()
         if not vmd_raw or not vmd.is_file():
@@ -619,39 +737,67 @@ class DirectWorkflowPage(QWidget):
             self.manual_cube_button.show()
             return
         vmd = vmd.resolve()
-        surface_cube = cube.resolve()
-        color_cube: Path | None = None
-        if str(self.style_data.get("surface_mode") or "signed") == "volume_mapped":
-            pair = core.find_esp_cube_pair(surface_cube)
-            if pair is None:
-                selected_role = core.cube_semantic_role(surface_cube)
-                requested_role = "电子密度" if selected_role == "esp" else "ESP"
-                companion_raw, _ = QFileDialog.getOpenFileName(
-                    self,
-                    f"选择配套的{requested_role} Cube",
-                    str(surface_cube.parent),
-                    "Cube (*.cub *.cube);;所有文件 (*)",
-                )
-                if not companion_raw:
-                    self._set_inputs_locked(False)
-                    self.start_button.setEnabled(True)
-                    self.start_button.setText("在 VMD 中绘图")
-                    self.manual_cube_button.show()
-                    self._set_status("ESP 等值面需要电子密度 Cube 和 ESP Cube；尚未选择完整文件对。")
-                    return
-                companion = Path(companion_raw).resolve()
-                pair = core.find_esp_cube_pair(surface_cube, [surface_cube, companion])
+        selected_cubes = list(dict.fromkeys(cube.resolve() for cube in cubes))
+        if not selected_cubes:
+            return
+        surface_mode = str(self.style_data.get("surface_mode") or "signed")
+        cube_sets: list[tuple[Path, Path | None]] = []
+        if surface_mode == "volume_mapped":
+            seen_pairs: set[tuple[Path, Path]] = set()
+            for selected_cube in selected_cubes:
+                pair = core.find_esp_cube_pair(selected_cube)
                 if pair is None:
-                    if selected_role == "esp":
-                        pair = (companion, surface_cube)
-                    else:
-                        pair = (surface_cube, companion)
-            surface_cube, color_cube = pair
+                    pair = core.find_esp_cube_pair(selected_cube, selected_cubes)
+                if pair is not None and pair in seen_pairs:
+                    continue
+                if pair is None:
+                    selected_role = core.cube_semantic_role(selected_cube)
+                    requested_role = "电子密度" if selected_role == "esp" else "ESP"
+                    companion_raw, _ = QFileDialog.getOpenFileName(
+                        self,
+                        f"为 {selected_cube.name} 选择配套的{requested_role} Cube",
+                        str(selected_cube.parent),
+                        "Cube (*.cub *.cube);;所有文件 (*)",
+                    )
+                    if not companion_raw:
+                        self._set_inputs_locked(False)
+                        self.start_button.setEnabled(True)
+                        self.start_button.setText("在 VMD 中绘图")
+                        self.manual_cube_button.show()
+                        self._set_status(
+                            "ESP 等值面需要电子密度 Cube 和 ESP Cube；尚未选择完整文件对。"
+                        )
+                        return
+                    companion = Path(companion_raw).resolve()
+                    pair = core.find_esp_cube_pair(
+                        selected_cube, [selected_cube, companion]
+                    )
+                    if pair is None:
+                        if selected_role == "esp":
+                            pair = (companion, selected_cube)
+                        else:
+                            pair = (selected_cube, companion)
+                surface_cube, color_cube = pair
+                pair_key = (surface_cube.resolve(), color_cube.resolve())
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+                cube_sets.append(pair_key)
+        else:
+            cube_sets = [(cube, None) for cube in selected_cubes]
+
+        for surface_cube, color_cube in cube_sets:
+            if color_cube is None:
+                continue
             try:
                 grids_match = core.cube_grids_compatible(surface_cube, color_cube)
             except ValueError as exc:
                 qt_feedback.show_error(
-                    self, "Cube 文件无效", exc, stage="检查 Cube 空间网格", file_path=surface_cube
+                    self,
+                    "Cube 文件无效",
+                    exc,
+                    stage="检查 Cube 空间网格",
+                    file_path=surface_cube,
                 )
                 self._set_inputs_locked(False)
                 self.start_button.setEnabled(True)
@@ -667,16 +813,23 @@ class DirectWorkflowPage(QWidget):
                 self.start_button.setText("在 VMD 中绘图")
                 self._set_inputs_locked(False)
                 return
+
+        surface_cube, color_cube = cube_sets[0]
         tcl_path = Path(tempfile.gettempdir()) / f"autocube_direct_{uuid.uuid4().hex}.tcl"
         try:
             core.write_text_atomic(
                 tcl_path,
-                core.build_vmd_tcl(self.style_data, rep0_commands=self.rep0_commands),
+                _build_multi_cube_vmd_tcl(
+                    self.style_data, self.rep0_commands, len(cube_sets)
+                ),
             )
             env = os.environ.copy()
-            env["CUBE_FILE"] = str(surface_cube)
-            if color_cube is not None:
-                env["COLOR_CUBE_FILE"] = str(color_cube)
+            env["CUBE_FILE_COUNT"] = str(len(cube_sets))
+            for index, (surface, color) in enumerate(cube_sets, start=1):
+                suffix = "" if index == 1 else f"_{index}"
+                env[f"CUBE_FILE{suffix}"] = str(surface)
+                if color is not None:
+                    env[f"COLOR_CUBE_FILE{suffix}"] = str(color)
             env["ISO_NORM"] = self._iso_text(iso_value)
             env["A_DIR"] = str(output_dir.resolve())
             self.vmd_process = subprocess.Popen(
@@ -701,6 +854,7 @@ class DirectWorkflowPage(QWidget):
 
         self.temp_tcl_path = tcl_path
         self.cube_path = surface_cube
+        self.cube_paths = selected_cubes
         self.process_timer.start()
         self._set_finish_actions_visible(False)
         self.start_button.setEnabled(False)
@@ -711,7 +865,12 @@ class DirectWorkflowPage(QWidget):
         self._set_status(
             f"VMD 已启动。使用 Render 保存图片时，输出将默认进入：{output_dir}"
         )
-        if color_cube is not None:
+        if len(cube_sets) > 1:
+            self._append_log(
+                f"已在同一个 VMD 窗口载入 {len(cube_sets)} 组 Cube："
+                + "、".join(surface.name for surface, _color in cube_sets)
+            )
+        elif color_cube is not None:
             self._append_log(
                 f"已用 {self.style_name_label.text()} 打开电子密度 {surface_cube.name}，映射 {color_cube.name}，等值面 {self._iso_text(iso_value)}。"
             )
@@ -863,6 +1022,7 @@ class DirectWorkflowPage(QWidget):
     def _reset_session(self) -> None:
         self.source_path = None
         self.cube_path = None
+        self.cube_paths.clear()
         self.before_cubes.clear()
         self.before_intermediates.clear()
         self.generated_intermediates.clear()
