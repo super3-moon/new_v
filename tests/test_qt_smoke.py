@@ -14,6 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import vmd_style_tool as core
 import direct_workflow_qt6 as direct_workflow
+import multiwfn_batch as batch
 from multiwfn_recorder_qt6 import MultiwfnRecorderDialog
 from PySide6.QtCore import QProcess, Qt
 from PySide6.QtGui import QTextCursor
@@ -51,6 +52,28 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def _seed_batch_presets(self, page, count: int = 2) -> None:
+        page.presets = [
+            batch.BatchPreset(
+                id=f"test_flow_{index}",
+                name=f"测试流程 {index}",
+                description="仅供界面交互测试",
+                input_extensions=[".fch"],
+                arguments=["-isilent", "1"],
+                stdin_template="100\n2\nq\n",
+                output_rules=[],
+                builtin=False,
+            )
+            for index in range(count)
+        ]
+        page.preset_combo.blockSignals(True)
+        page.preset_combo.clear()
+        for preset in page.presets:
+            page.preset_combo.addItem(preset.name, preset.id)
+        page.preset_combo.setCurrentIndex(0)
+        page.preset_combo.blockSignals(False)
+        page._load_selected_preset()
 
     def test_default_window_size_is_balanced_and_screen_aware(self) -> None:
         self.assertEqual(preferred_window_size(1536, 816), (1320, 718))
@@ -110,13 +133,13 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertGreater(window.material_filter_combo.count(), 1)
             self.assertEqual(window.style_sort_combo.count(), 4)
             self.assertEqual(window.out_dir_edit.text(), self.temp_dir.name)
-            self.assertGreaterEqual(window.batch_page.preset_combo.count(), 3)
+            self.assertEqual(window.batch_page.preset_combo.count(), 0)
 
             window._show_batch_page()
             self.assertEqual(window.stack.currentIndex(), window.batch_page_index)
             self.assertTrue(window.nav_batch_btn.isChecked())
             self.assertTrue(window.page_header.isHidden())
-            self.assertIn("100", window.batch_page.sequence_editor.text())
+            self.assertEqual(window.batch_page.sequence_editor.text(), "")
 
             window.style_search_edit.setText("glossy")
             self.assertGreater(len(window.bundle_grid.cards), 0)
@@ -195,7 +218,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.app.processEvents()
             self.assertGreater(page.template_scroll.verticalScrollBar().maximum(), 0)
             self.assertFalse(page.manual_output_container.isVisible())
-            self.assertTrue(page.common_output_checks["structure"].isChecked())
+            self.assertFalse(page.common_output_checks["structure"].isChecked())
 
             page.common_output_checks["cube"].setChecked(True)
             self.assertIn("*.cub", [rule.pattern for rule in page._parse_output_rules()])
@@ -345,6 +368,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertFalse(window.page_header.isVisible())
             self.assertFalse(window.style_mode_section.isVisible())
             page = window.batch_page
+            self._seed_batch_presets(page, 1)
             toolbar_buttons = [
                 button.text()
                 for button in page.findChildren(QPushButton)
@@ -405,6 +429,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             window.show()
             window._show_batch_page()
             page = window.batch_page
+            self._seed_batch_presets(page, 2)
             self.app.processEvents()
 
             original_id = str(page.preset_combo.currentData())
@@ -494,6 +519,10 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             window._show_direct_workflow()
             self.assertEqual(window.stack.currentIndex(), window.direct_page_index)
             self.assertEqual(window.main_title.text(), "直接绘图")
+            self.assertEqual(
+                window.main_subtitle.text(),
+                "添加orca或gaussian波函数文件，自动唤起multiwfn操作，软件将自动将产生的cub文件载入vmd进行绘图，",
+            )
             self.assertFalse(window.style_action_bar.isVisible())
 
             page = window.direct_page
@@ -504,6 +533,10 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertEqual(page.start_button.text(), "在 VMD 中直接绘图")
             direct_scroll = page.findChild(QScrollArea, "directWorkflowScroll")
             self.assertIsNotNone(direct_scroll)
+            self.assertIn(
+                "或点击此区域选择文件 · Cube 可直接绘图\n其他文件将交给 Multiwfn",
+                [label.text() for label in page.findChildren(QLabel)],
+            )
 
             window.resize(1260, 780)
             window.show()
@@ -806,6 +839,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertNotIn("软件已启动", window.log_view.toPlainText())
             self.assertNotIn("· 内置", window.batch_page.preset_combo.currentText())
             self.assertNotIn("· 自定义", window.batch_page.preset_combo.currentText())
+            self.assertEqual(window.batch_page.preset_combo.count(), 0)
             self.assertEqual(window.count_label.text(), f"{len(window.bundle_styles)} 个风格")
             self.assertTrue(
                 all(combo.itemText(0) == "不修改" for combo in dialog.state_combos.values())

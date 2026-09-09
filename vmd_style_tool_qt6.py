@@ -2665,7 +2665,7 @@ class MainWindow(QMainWindow):
         self._set_page_chrome(
             "direct",
             "直接绘图",
-            "添加一个本地文件，由软件接管 Multiwfn、Cube 检测和 VMD 启动流程",
+            "添加orca或gaussian波函数文件，自动唤起multiwfn操作，软件将自动将产生的cub文件载入vmd进行绘图，",
         )
         self.stack.setCurrentIndex(self.direct_page_index)
         self._animate_stack_page()
