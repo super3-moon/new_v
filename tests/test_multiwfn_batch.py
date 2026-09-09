@@ -10,16 +10,8 @@ import multiwfn_batch as batch
 
 
 class BatchPresetTests(unittest.TestCase):
-    def test_builtin_presets_are_valid_and_versioned(self) -> None:
-        presets = batch.builtin_presets()
-        self.assertGreaterEqual(len(presets), 3)
-        self.assertEqual(len({preset.id for preset in presets}), len(presets))
-        self.assertTrue(
-            all(
-                preset.multiwfn_version == batch.CURRENT_MULTIWFN_VERSION
-                for preset in presets
-            )
-        )
+    def test_no_builtin_presets_are_shown(self) -> None:
+        self.assertEqual(batch.builtin_presets(), [])
 
     def test_template_rendering_requires_declared_values(self) -> None:
         self.assertEqual(

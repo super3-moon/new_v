@@ -162,14 +162,14 @@ mol addrep top
         ).encode("utf-8")
         self.assertEqual(
             hashlib.sha256(canonical(core.ORIGINAL_SURFACE_STYLES)).hexdigest(),
-            "46cb6db69c72c980719036ac54184f533a125e8ee96f7c98f20a7b712cae8e8a",
+            "ef166f7417824f1514e337c0d50295ca236af139a0d8c68879f4675c6486ea71",
         )
         self.assertEqual(
             hashlib.sha256(canonical(core.ORIGINAL_SKELETON_STYLES)).hexdigest(),
             "8cc70caa8a512f58983ce50b5740dd537ee90d36e698a7630079f6b73baa700c",
         )
         self.assertEqual(
-            [style["id"] for style in core.STYLES[:8]],
+            [style["id"] for style in core.STYLES[:7]],
             [
                 "classic_glossy_447",
                 "soft_glossy_449",
@@ -178,13 +178,18 @@ mol addrep top
                 "goodsell_58009",
                 "edgy_58009",
                 "translucent_clean_447",
-                "rdg_clarity_291",
             ],
         )
         self.assertEqual(
-            [style["id"] for style in core.STYLES[8:]],
+            [style["id"] for style in core.STYLES[7:]],
             list(core._APPENDED_STYLE_IDS),
         )
+        for removed_id in (
+            "rdg_clarity_291",
+            "density_d1_green_blue_glossy",
+            "density_d6_green_orange_diffuse",
+        ):
+            self.assertNotIn(removed_id, core.STYLE_BY_ID)
         self.assertEqual(
             [style["id"] for style in core.SKELETON_STYLES[:4]],
             [
@@ -211,11 +216,9 @@ mol addrep top
         self.assertEqual(
             core.DENSITY_DIFFERENCE_STYLE_MAP,
             {
-                "D1": "density_d1_green_blue_glossy",
                 "D2": "classic_glossy_447",
                 "D3": "soft_glossy_449",
                 "D5": "bright_bule_yellow_userpack",
-                "D6": "density_d6_green_orange_diffuse",
                 "D7": "modern_cool_palette_userpack",
             },
         )

@@ -948,12 +948,6 @@ class AutomaticWorkflowsPage(QWidget):
         self._on_image_size_changed()
         body_layout.addWidget(settings_card)
 
-        summary_card, summary_layout = self._card("4 · 运行前确认")
-        self.workflow_summary_label = QLabel()
-        self.workflow_summary_label.setObjectName("batchPresetSummary")
-        self.workflow_summary_label.setWordWrap(True)
-        summary_layout.addWidget(self.workflow_summary_label)
-        body_layout.addWidget(summary_card)
         body_layout.addStretch(1)
 
         self.configuration_scroll = self._scroll_page(body, 1040)

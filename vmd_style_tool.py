@@ -250,22 +250,6 @@ ORIGINAL_SURFACE_STYLES = [
         "sources": ["http://sobereva.com/447", "http://sobereva.com/483"],
         "notes": "Transparent look for cleaner overlap visibility.",
     },
-    {
-        "id": "rdg_clarity_291",
-        "name": "RDG Clarity",
-        "image": "12_rdg_light3_on.png",
-        "material": "Glossy",
-        "pos_color": 12,
-        "neg_color": 22,
-        "commands": BASE_VIEW + [
-            "light 0 on",
-            "light 1 on",
-            "light 2 on",
-            "light 3 on",
-        ],
-        "sources": ["http://sobereva.com/291"],
-        "notes": "Depthcue off with brighter lights for analysis snapshots.",
-    },
 ]
 
 GLOSSY_DEFAULT = [
@@ -496,32 +480,6 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
         ],
         notes="ESP 映射电子密度等值面，VMD Isosurface Draw=Wireframe，Step=3；封面来自明确标注为 VMD Wireframe Isosurface 的教程示例。",
     ),
-    {
-        "id": "density_d1_green_blue_glossy",
-        "code": "D1",
-        "name": "D1 Density Difference · Green/Blue Glossy",
-        "image": "01_dual_color_basic.png",
-        "surface_mode": "signed",
-        "material": "Glossy",
-        "pos_color": 7,
-        "neg_color": 0,
-        "commands": BASE_VIEW + ["light 3 on"] + GLOSSY_DEFAULT,
-        "sources": ["https://www.umsyar.com/483", "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/30407.html"],
-        "notes": "电子密度差正值绿色、负值蓝色；两张 Solid Surface 等值面。",
-    },
-    {
-        "id": "density_d6_green_orange_diffuse",
-        "code": "D6",
-        "name": "D6 Density Difference · Green/Orange Matte",
-        "image": "12_rdg_light3_on.png",
-        "surface_mode": "signed",
-        "material": "Diffuse",
-        "pos_color": 7,
-        "neg_color": 3,
-        "commands": BASE_VIEW + DIFFUSE_DEFAULT,
-        "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html", "https://www.umsyar.com/483"],
-        "notes": "绿色/橙色正负区配 VMD Diffuse 哑光材质。",
-    },
 ]
 
 # D2/D3/D5/D7 already existed before the ESP work.  Keep the original
@@ -529,11 +487,9 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
 # appended.  This map records the selected research labels without changing
 # any legacy record.
 DENSITY_DIFFERENCE_STYLE_MAP = {
-    "D1": "density_d1_green_blue_glossy",
     "D2": "classic_glossy_447",
     "D3": "soft_glossy_449",
     "D5": "bright_bule_yellow_userpack",
-    "D6": "density_d6_green_orange_diffuse",
     "D7": "modern_cool_palette_userpack",
 }
 
@@ -544,8 +500,6 @@ _APPENDED_STYLE_IDS = (
     "esp_e4_turbo_edgyglass_443",
     "esp_e5_bwr_diffuse",
     "esp_e7_bwr_wireframe",
-    "density_d1_green_blue_glossy",
-    "density_d6_green_orange_diffuse",
 )
 _SELECTED_STYLE_BY_ID = {
     style["id"]: style for style in _SELECTED_STYLE_RESEARCH_ENTRIES

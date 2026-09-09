@@ -136,7 +136,7 @@ class FileDropZone(QFrame):
         title = QLabel("将一个本地文件拖到这里")
         title.setObjectName("directDropTitle")
         title.setAlignment(Qt.AlignCenter)
-        subtitle = QLabel("或点击此区域选择文件 · Cube 可直接绘图，其他文件将交给 Multiwfn")
+        subtitle = QLabel("或点击此区域选择文件 · Cube 可直接绘图\n其他文件将交给 Multiwfn")
         subtitle.setObjectName("helperText")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
