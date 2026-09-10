@@ -171,7 +171,15 @@ class AutomaticWorkflowTests(unittest.TestCase):
                 ) as restore,
             ):
                 return_code, reason = runner._run_process(
-                    [sys.executable, "-c", "import time; time.sleep(1.2)"],
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import time; "
+                            "print('MolecularStudio: adjust the scene', flush=True); "
+                            "time.sleep(1.2)"
+                        ),
+                    ],
                     cwd=root,
                     env={},
                     stdin_text=None,
@@ -184,6 +192,41 @@ class AutomaticWorkflowTests(unittest.TestCase):
                 )
             self.assertEqual((return_code, reason), (0, ""))
             self.assertEqual(restore.call_count, 1)
+            self.assertFalse(restore.call_args.kwargs["topmost"])
+
+    def test_interactive_vmd_window_waits_until_capture_ui_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_file = root / "ethanol.fch"
+            input_file.write_text("wavefunction", encoding="utf-8")
+            plan = automation.create_automation_plan(
+                [input_file], "surface_esp", root / "runs", self._settings()
+            )
+            runner = automation.AutomaticWorkflowRunner(
+                plan, Path(sys.executable), Path(sys.executable)
+            )
+            with (
+                mock.patch.object(
+                    orbital_vmd, "vmd_display_window_handles", return_value=set()
+                ),
+                mock.patch.object(
+                    orbital_vmd, "restore_vmd_display_window", return_value=True
+                ) as restore,
+            ):
+                return_code, reason = runner._run_process(
+                    [sys.executable, "-c", "import time; time.sleep(0.8)"],
+                    cwd=root,
+                    env={},
+                    stdin_text=None,
+                    timeout_seconds=10,
+                    log_path=root / "vmd-window-not-ready.log",
+                    source="VMD",
+                    index=1,
+                    hide_window=True,
+                    show_window=True,
+                )
+            self.assertEqual((return_code, reason), (0, ""))
+            restore.assert_not_called()
 
     def test_full_pipeline_collects_png_cubes_logs_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
