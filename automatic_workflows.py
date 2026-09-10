@@ -1233,6 +1233,8 @@ class AutomaticWorkflowRunner:
             reader.start()
             started = time.monotonic()
             next_window_check = started
+            vmd_window_ready = not show_window
+            vmd_window_ready_at = started if vmd_window_ready else None
             vmd_window_restored = False
             next_heartbeat = started
             stream_finished = False
@@ -1249,16 +1251,18 @@ class AutomaticWorkflowRunner:
                     now = time.monotonic()
                     if (
                         show_window
+                        and vmd_window_ready
                         and not vmd_window_restored
                         and now >= next_window_check
-                        and now - started <= 20.0
+                        and vmd_window_ready_at is not None
+                        and now - vmd_window_ready_at <= 20.0
                     ):
                         vmd_window_restored = orbital_vmd.restore_vmd_display_window(
                             process.pid,
                             excluded_handles=existing_vmd_windows,
                             width=INTERACTIVE_VMD_WINDOW[0],
                             height=INTERACTIVE_VMD_WINDOW[1],
-                            topmost=True,
+                            topmost=False,
                         )
                         next_window_check = now + 0.7
                     try:
@@ -1272,6 +1276,18 @@ class AutomaticWorkflowRunner:
                         log.flush()
                         text = item.rstrip("\r\n")
                         if text:
+                            if (
+                                show_window
+                                and source.casefold() == "vmd"
+                                and "MolecularStudio: adjust the scene" in text
+                            ):
+                                # VMD can change its display state while the Tcl scene and
+                                # capture controls are still being created.  Restore it once
+                                # only after that initialization is complete; after success,
+                                # never reposition it again so the user can move it freely.
+                                vmd_window_ready = True
+                                vmd_window_ready_at = now
+                                next_window_check = now
                             self._emit("output", index=index, source=source, text=text)
                             progress_match = re.search(
                                 r"Progress:\s*\[[^\]]*\]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
