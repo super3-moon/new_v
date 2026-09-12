@@ -53,6 +53,11 @@ SUPPORTED_WAVEFUNCTION_EXTENSIONS = (
 # vectors.  Density is generated first on the normal ESP plotting grid, then
 # Multiwfn mode 8 reuses density.cub's grid for the ESP calculation.
 ESP_STDIN_SEQUENCE = "5\n1\n1\n2\n0\n5\n12\n8\ndensity.cub\n2\n0\nq\n"
+# This is Multiwfn's bundled examples/drawESP/ESPext.txt sequence, followed
+# only by the menu steps needed to return and exit cleanly.
+ESP_EXTREMA_STDIN_SEQUENCE = (
+    "12\n3\n0.15\n0\n5\nmol.pdb\n6\n2\n-1\n-1\nq\n"
+)
 
 AUTOMATION_STAGE_PROGRESS = {
     STAGE_MULTIWFN: (1.0, 74.0),
@@ -217,6 +222,7 @@ def normalize_settings(settings: dict) -> dict:
         "vmd_timeout_seconds": vmd_timeout,
         "multiwfn_timeout_seconds": multiwfn_timeout,
         "keep_cubes": bool(normalized.get("keep_cubes", True)),
+        "show_extrema": bool(normalized.get("show_extrema", False)),
         "style_snapshot": style_snapshot,
     }
 
@@ -241,6 +247,7 @@ class AutomationJob:
     vmd_return_code: int | None = None
     density_cube: str = ""
     esp_cube: str = ""
+    extrema_pdb: str = ""
     image_path: str = ""
     viewpoint_path: str = ""
     vmd_save_state_path: str = ""
@@ -268,6 +275,7 @@ class AutomationJob:
             vmd_return_code=raw.get("vmd_return_code"),
             density_cube=str(raw.get("density_cube") or ""),
             esp_cube=str(raw.get("esp_cube") or ""),
+            extrema_pdb=str(raw.get("extrema_pdb") or ""),
             image_path=str(raw.get("image_path") or ""),
             viewpoint_path=str(raw.get("viewpoint_path") or ""),
             vmd_save_state_path=str(raw.get("vmd_save_state_path") or ""),
@@ -295,6 +303,7 @@ class AutomationJob:
             "vmd_return_code": self.vmd_return_code,
             "density_cube": self.density_cube,
             "esp_cube": self.esp_cube,
+            "extrema_pdb": self.extrema_pdb,
             "image_path": self.image_path,
             "viewpoint_path": self.viewpoint_path,
             "vmd_save_state_path": self.vmd_save_state_path,
@@ -520,6 +529,29 @@ def build_interactive_vmd_tcl(
     return vmd_core.build_vmd_tcl(style, rep0_commands=rep0_commands)
 
 
+def build_esp_extrema_vmd_tcl() -> str:
+    """Load ESP extrema using the bundled ESPext.vmd representation settings."""
+
+    return "\n".join(
+        [
+            "",
+            "# ESP extrema: representation matches Multiwfn examples/drawESP/ESPext.vmd.",
+            "set ESP_SURFACE_MOL [molinfo top]",
+            "mol new [file normalize $::env(EXTREMA_PDB_FILE)] type pdb waitfor all",
+            "set ESP_EXTREMA_MOL [molinfo top]",
+            "mol modstyle 0 $ESP_EXTREMA_MOL VDW 0.07 20",
+            'mol modselect 0 $ESP_EXTREMA_MOL "name C"',
+            "mol modcolor 0 $ESP_EXTREMA_MOL ColorID 32",
+            "mol addrep $ESP_EXTREMA_MOL",
+            "mol modstyle 1 $ESP_EXTREMA_MOL VDW 0.07 20",
+            'mol modselect 1 $ESP_EXTREMA_MOL "name O"',
+            "mol modcolor 1 $ESP_EXTREMA_MOL ColorID 21",
+            "mol top $ESP_SURFACE_MOL",
+            "",
+        ]
+    )
+
+
 EventCallback = Callable[[dict], None]
 
 
@@ -722,6 +754,11 @@ class AutomaticWorkflowRunner:
         job.work_dir.mkdir(parents=True, exist_ok=False)
         try:
             self._run_multiwfn(job)
+            if (
+                self.plan.settings.get("show_extrema", False)
+                and self.plan.settings["render_mode"] != "cubes_only"
+            ):
+                self._run_esp_extrema(job)
             self._validate_cubes(job)
             render_mode = self.plan.settings["render_mode"]
             if render_mode == "automatic":
@@ -825,6 +862,53 @@ class AutomaticWorkflowRunner:
             )
         job.multiwfn_status = STATUS_SUCCESS
 
+    def _run_esp_extrema(self, job: AutomationJob) -> None:
+        self._set_stage(job, STAGE_MULTIWFN, "正在计算表面静电势极值点")
+        settings = self.plan.settings
+        command = [
+            str(self.multiwfn_exe),
+            str(job.input_path),
+            "-isilent",
+            "1",
+            "-ESPrhoiso",
+            str(settings["rho_iso"]),
+        ]
+        _write_text_atomic(
+            job.work_dir / "extrema_stdin.txt", ESP_EXTREMA_STDIN_SEQUENCE
+        )
+        env = os.environ.copy()
+        env["Multiwfnpath"] = str(self.multiwfn_exe.parent)
+        return_code, reason = self._run_process(
+            command,
+            cwd=job.work_dir,
+            env=env,
+            stdin_text=ESP_EXTREMA_STDIN_SEQUENCE,
+            timeout_seconds=int(settings["multiwfn_timeout_seconds"]),
+            log_path=job.work_dir / "multiwfn_extrema.log",
+            source="Multiwfn",
+            index=job.index,
+            hide_window=True,
+        )
+        if reason == "cancelled":
+            job.multiwfn_status = STATUS_CANCELLED
+            raise _CancelledError
+        if reason == "timeout":
+            job.multiwfn_status = STATUS_TIMEOUT
+            raise _TimeoutError(
+                f"极值点计算超过 {settings['multiwfn_timeout_seconds']} 秒，已停止。"
+            )
+        extrema = job.work_dir / "surfanalysis.pdb"
+        if return_code != 0:
+            job.multiwfn_status = STATUS_FAILED
+            raise RuntimeError(
+                f"表面静电势极值点计算未正常完成（退出码 {return_code}），请查看运行记录。"
+            )
+        if not extrema.is_file() or extrema.stat().st_size <= 0:
+            job.multiwfn_status = STATUS_FAILED
+            raise RuntimeError("表面静电势极值点计算完成，但没有生成有效结果。")
+        job.extrema_pdb = str(extrema.resolve())
+        job.multiwfn_status = STATUS_SUCCESS
+
     def _validate_cubes(self, job: AutomationJob) -> None:
         self._set_stage(job, STAGE_CUBE_VALIDATION, "正在检查 Cube 配对与空间网格")
         candidates = [
@@ -868,6 +952,8 @@ class AutomaticWorkflowRunner:
                 "A_DIR": str(job.work_dir),
             }
         )
+        if job.extrema_pdb and Path(job.extrema_pdb).is_file():
+            env["EXTREMA_PDB_FILE"] = job.extrema_pdb
         return env
 
     def _capture_vmd_view(self, job: AutomationJob) -> orbital_vmd.VmdViewState:
@@ -884,6 +970,8 @@ class AutomaticWorkflowRunner:
         for path in (protocol, cancel_marker, error_log, native_state):
             path.unlink(missing_ok=True)
         initial_scene = build_interactive_vmd_tcl(style, rep0_commands)
+        if job.extrema_pdb and Path(job.extrema_pdb).is_file():
+            initial_scene += build_esp_extrema_vmd_tcl()
         capture_script = orbital_vmd.build_interactive_capture_tcl(
             job.density_cube,
             protocol,
@@ -1113,6 +1201,7 @@ class AutomaticWorkflowRunner:
         stem = _clean_file_part(job.input_path.stem)
         for source, label in (
             (job.work_dir / "multiwfn.log", "Multiwfn"),
+            (job.work_dir / "multiwfn_extrema.log", "ESP_extrema"),
             (job.work_dir / "vmd.log", "VMD"),
             (job.work_dir / "vmd_viewpoint.log", "VMD_adjustment"),
         ):
@@ -1128,6 +1217,13 @@ class AutomaticWorkflowRunner:
                 Path(job.esp_cube), job.result_dir / f"{stem}_ESP.cub"
             )
             job.outputs.extend([str(density), str(esp)])
+
+        extrema = Path(job.extrema_pdb) if job.extrema_pdb else Path()
+        if job.extrema_pdb and extrema.is_file():
+            copied = self._copy_unique(
+                extrema, job.result_dir / f"{stem}_ESP_extrema.pdb"
+            )
+            job.outputs.append(str(copied))
 
         if job.image_path:
             style = self.plan.settings["style_snapshot"].get("style") or {}
@@ -1161,7 +1257,9 @@ class AutomaticWorkflowRunner:
         for source in (
             Path(job.density_cube) if job.density_cube else None,
             Path(job.esp_cube) if job.esp_cube else None,
+            Path(job.extrema_pdb) if job.extrema_pdb else None,
             job.work_dir / "multiwfn.log",
+            job.work_dir / "multiwfn_extrema.log",
             job.work_dir / "vmd.log",
             job.work_dir / "vmd_viewpoint.log",
             job.work_dir / "automatic_render.vmd",
@@ -1437,6 +1535,12 @@ def retry_drawing_from_manifest(
         raise AutomationValidationError("重试绘图所需的两个 Cube 文件不存在。")
     if not vmd_core.cube_grids_compatible(density, potential):
         raise AutomationValidationError("重试绘图所需的 Cube 空间网格不兼容。")
+    extrema = Path(str(raw_job.get("extrema_pdb") or ""))
+    if settings.get("show_extrema", False) and not extrema.is_file():
+        recovery = manifest_file.parent / "recovery" / f"{int(raw_job.get('index') or 0):04d}_{_clean_file_part(Path(str(raw_job.get('input_path') or 'input')).stem)}"
+        recovered_extrema = recovery / "surfanalysis.pdb"
+        if recovered_extrema.is_file():
+            extrema = recovered_extrema
 
     input_path = Path(str(raw_job.get("input_path") or "input.fch"))
     work_dir = manifest_file.parent / "retries" / f"{_clean_file_part(input_path.stem)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1450,6 +1554,7 @@ def retry_drawing_from_manifest(
         multiwfn_status=STATUS_SUCCESS,
         density_cube=str(density.resolve()),
         esp_cube=str(potential.resolve()),
+        extrema_pdb=(str(extrema.resolve()) if extrema.is_file() else ""),
     )
     definition = _definition_map()[WORKFLOW_SURFACE_ESP]
     plan = AutomationPlan(

@@ -521,7 +521,7 @@ class QtInterfaceSmokeTests(unittest.TestCase):
             self.assertEqual(window.main_title.text(), "直接绘图")
             self.assertEqual(
                 window.main_subtitle.text(),
-                "添加orca或gaussian波函数文件，自动唤起multiwfn操作，软件将自动将产生的cub文件载入vmd进行绘图，",
+                "添加orca或gaussian波函数文件，自动唤起multiwfn操作，软件将自动将产生的cub文件载入vmd进行绘图。\n推荐使用全自动流程中的ESP自动流程",
             )
             self.assertFalse(window.style_action_bar.isVisible())
 
@@ -731,13 +731,40 @@ class QtInterfaceSmokeTests(unittest.TestCase):
 
             args, kwargs = popen.call_args
             self.assertEqual(args[0], [str(fake_multi.resolve()), str(source.resolve())])
-            self.assertEqual(kwargs["cwd"], str(source.parent.resolve()))
+            multiwfn_work_dir = Path(kwargs["cwd"])
+            self.assertEqual(multiwfn_work_dir.parent, source.parent.resolve())
+            self.assertTrue(multiwfn_work_dir.name.startswith(".molecular_studio_"))
             self.assertEqual(kwargs["env"]["Multiwfnpath"], str(fake_multi.parent.resolve()))
             if os.name == "nt":
                 self.assertEqual(kwargs["creationflags"], subprocess.CREATE_NEW_CONSOLE)
 
             page.process_timer.stop()
             page.multiwfn_process = None
+        finally:
+            window.close()
+
+    def test_direct_workflow_numbers_same_name_outputs_without_overwriting(self) -> None:
+        window = MainWindow()
+        try:
+            root = Path(self.temp_dir.name)
+            original = root / "density.cub"
+            first_numbered = root / "density1.cub"
+            original.write_text("original", encoding="utf-8")
+            first_numbered.write_text("previous", encoding="utf-8")
+
+            page = window.direct_page
+            work_dir = root / ".molecular_studio_test"
+            work_dir.mkdir()
+            (work_dir / "density.cub").write_text("current", encoding="utf-8")
+            page.multiwfn_work_dir = work_dir
+
+            published = page._publish_multiwfn_outputs(root)
+
+            self.assertEqual(original.read_text(encoding="utf-8"), "original")
+            self.assertEqual(first_numbered.read_text(encoding="utf-8"), "previous")
+            self.assertEqual((root / "density2.cub").read_text(encoding="utf-8"), "current")
+            self.assertEqual(published, [(root / "density2.cub").resolve()])
+            self.assertFalse(work_dir.exists())
         finally:
             window.close()
 

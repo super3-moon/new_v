@@ -50,6 +50,12 @@ class FakeProcessRunner(automation.AutomaticWorkflowRunner):
     def _run_process(self, command, *, cwd, env, stdin_text, timeout_seconds, log_path, source, index, hide_window, **_kwargs):  # type: ignore[override]
         log_path.write_text(f"{source} completed\n", encoding="utf-8")
         if source == "Multiwfn":
+            if stdin_text == automation.ESP_EXTREMA_STDIN_SEQUENCE:
+                (cwd / "surfanalysis.pdb").write_text(
+                    "ATOM      1  C   EXT A   1       0.0 0.0 0.0\n",
+                    encoding="ascii",
+                )
+                return 0, ""
             (cwd / "density.cub").write_text(
                 cube_text(dimensions=3, step=0.5), encoding="utf-8"
             )
@@ -83,6 +89,7 @@ class AutomaticWorkflowTests(unittest.TestCase):
             "height": 1200,
             "output_location": "result_root",
             "keep_cubes": True,
+            "show_extrema": False,
             "vmd_timeout_seconds": 120,
             **overrides,
         }
@@ -106,6 +113,7 @@ class AutomaticWorkflowTests(unittest.TestCase):
             esp_style_snapshot()["style"]["default_iso_value"],
         )
         self.assertEqual(len(normalized["style_snapshot"]["hash"]), 64)
+        self.assertFalse(normalized["show_extrema"])
 
     def test_headless_tcl_reuses_volume_mapping_and_renders_then_quits(self) -> None:
         snapshot = esp_style_snapshot()
@@ -131,6 +139,39 @@ class AutomaticWorkflowTests(unittest.TestCase):
 
     def test_multiwfn_esp_reuses_density_cube_grid(self) -> None:
         self.assertIn("\n12\n8\ndensity.cub\n2\n0\nq\n", automation.ESP_STDIN_SEQUENCE)
+
+    def test_esp_extrema_sequence_and_vmd_style_match_bundled_examples(self) -> None:
+        self.assertEqual(
+            automation.ESP_EXTREMA_STDIN_SEQUENCE,
+            "12\n3\n0.15\n0\n5\nmol.pdb\n6\n2\n-1\n-1\nq\n",
+        )
+        tcl = automation.build_esp_extrema_vmd_tcl()
+        self.assertIn("VDW 0.07 20", tcl)
+        self.assertIn('name C', tcl)
+        self.assertIn("ColorID 32", tcl)
+        self.assertIn('name O', tcl)
+        self.assertIn("ColorID 21", tcl)
+        self.assertTrue(tcl.index("mol top $ESP_SURFACE_MOL") > tcl.index("ColorID 21"))
+
+    def test_optional_esp_extrema_are_generated_and_collected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            input_file = root / "extrema.fch"
+            input_file.write_text("wavefunction", encoding="utf-8")
+            plan = automation.create_automation_plan(
+                [input_file],
+                "surface_esp",
+                root / "runs",
+                self._settings(show_extrema=True),
+            )
+            runner = FakeProcessRunner(plan, Path(sys.executable), Path(sys.executable))
+            result = runner.run()
+
+            self.assertEqual(result["status"], automation.STATUS_SUCCESS)
+            job = plan.jobs[0]
+            self.assertTrue(Path(job.extrema_pdb).is_file())
+            self.assertTrue(any(path.endswith("_ESP_extrema.pdb") for path in job.outputs))
+            self.assertTrue(any(path.endswith("_ESP_extrema.log") for path in job.outputs))
 
     def test_esp_capture_registers_scene_for_complete_state_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -93,6 +93,10 @@ class AutomaticWorkflowInterfaceTests(unittest.TestCase):
             settings = page._settings()
             self.assertEqual(settings["rho_iso"], "0.001")
             self.assertEqual((settings["width"], settings["height"]), (1600, 1200))
+            self.assertFalse(settings["show_extrema"])
+            self.assertEqual(page.show_extrema_check.text(), "显示表面静电势极值点")
+            page.show_extrema_check.setChecked(True)
+            self.assertTrue(page._settings()["show_extrema"])
             self.assertNotIn("运行前确认", "\n".join(label.text() for label in page.findChildren(QLabel)))
             self.assertFalse(hasattr(page, "workflow_summary_label"))
             clipped = [
