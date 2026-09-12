@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -69,6 +70,19 @@ def file_snapshot(
 
 def cube_snapshot(directories: list[Path]) -> dict[Path, tuple[int, int]]:
     return file_snapshot(directories, CUBE_SUFFIXES)
+
+
+def numbered_output_path(path: Path) -> Path:
+    """Return a non-existing sibling using density1, density2, ... numbering."""
+
+    if not path.exists():
+        return path
+    counter = 1
+    while True:
+        candidate = path.with_name(f"{path.stem}{counter}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _build_multi_cube_vmd_tcl(
@@ -201,6 +215,7 @@ class DirectWorkflowPage(QWidget):
         self.before_intermediates: dict[Path, tuple[int, int]] = {}
         self.generated_intermediates: set[Path] = set()
         self.scan_directories: list[Path] = []
+        self.multiwfn_work_dir: Path | None = None
         self.cancel_requested = False
 
         self.process_timer = QTimer(self)
@@ -520,6 +535,19 @@ class DirectWorkflowPage(QWidget):
         self.before_intermediates = file_snapshot(
             self.scan_directories, INTERMEDIATE_SUFFIXES
         )
+        try:
+            self.multiwfn_work_dir = Path(
+                tempfile.mkdtemp(prefix=".molecular_studio_", dir=str(output_dir))
+            ).resolve()
+        except OSError as exc:
+            qt_feedback.show_error(
+                self,
+                "无法准备运行目录",
+                exc,
+                stage="准备 Multiwfn 输出",
+                file_path=output_dir,
+            )
+            return
         env = os.environ.copy()
         env["Multiwfnpath"] = str(multi.parent)
         creation_flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
@@ -527,12 +555,13 @@ class DirectWorkflowPage(QWidget):
         try:
             self.multiwfn_process = subprocess.Popen(
                 [str(multi), str(self.source_path)],
-                cwd=str(output_dir),
+                cwd=str(self.multiwfn_work_dir),
                 env=env,
                 creationflags=creation_flags,
             )
         except OSError as exc:
             self.multiwfn_process = None
+            self._remove_empty_multiwfn_work_dir()
             qt_feedback.show_error(
                 self, "无法启动 Multiwfn", exc, stage="启动 Multiwfn", program="Multiwfn", file_path=multi
             )
@@ -552,6 +581,46 @@ class DirectWorkflowPage(QWidget):
                 "Multiwfn 已打开。请在其窗口中生成一个 Cube 文件，然后正常输入 q 退出。"
             )
         self._append_log(f"已启动 Multiwfn：{self.source_path.name}")
+
+    def _remove_empty_multiwfn_work_dir(self) -> None:
+        work_dir = self.multiwfn_work_dir
+        self.multiwfn_work_dir = None
+        if work_dir is None:
+            return
+        try:
+            work_dir.rmdir()
+        except OSError:
+            pass
+
+    def _publish_multiwfn_outputs(self, output_dir: Path) -> list[Path]:
+        """Move this run's files out of its private folder without overwriting."""
+
+        work_dir = self.multiwfn_work_dir
+        if work_dir is None or not work_dir.is_dir():
+            return []
+        published: list[Path] = []
+        try:
+            children = sorted(work_dir.iterdir(), key=lambda item: item.name.casefold())
+        except OSError as exc:
+            self._append_log(f"无法整理本次 Multiwfn 输出：{exc}")
+            return []
+        for source in children:
+            target = numbered_output_path(output_dir / source.name)
+            try:
+                shutil.move(str(source), str(target))
+            except OSError as exc:
+                self._append_log(f"未能移动输出 {source.name}：{exc}")
+                continue
+            if target.is_file():
+                published.append(target.resolve())
+            elif target.is_dir():
+                published.extend(
+                    path.resolve() for path in target.rglob("*") if path.is_file()
+                )
+            if target.name != source.name:
+                self._append_log(f"同名文件已存在，本次输出保存为：{target.name}")
+        self._remove_empty_multiwfn_work_dir()
+        return published
 
     def _changed_cubes(self) -> list[Path]:
         after = cube_snapshot(self.scan_directories)
@@ -638,11 +707,19 @@ class DirectWorkflowPage(QWidget):
     def _handle_multiwfn_finished(self, exit_code: int) -> None:
         self.stop_button.hide()
         self.back_button.setEnabled(True)
+        try:
+            output_dir = self._validated_output_dir()
+        except (OSError, ValueError):
+            output_dir = self.source_path.parent if self.source_path else Path.cwd()
+        published = self._publish_multiwfn_outputs(output_dir)
         after_intermediates = file_snapshot(
             self.scan_directories, INTERMEDIATE_SUFFIXES
         )
         self.generated_intermediates.update(
             path for path in after_intermediates if path not in self.before_intermediates
+        )
+        self.generated_intermediates.update(
+            path for path in published if path.suffix.lower() in INTERMEDIATE_SUFFIXES
         )
         if self.cancel_requested:
             self._set_inputs_locked(False)
@@ -652,7 +729,12 @@ class DirectWorkflowPage(QWidget):
             self._append_log("Multiwfn 工作流已由用户停止。")
             return
 
-        changed = self._changed_cubes()
+        changed = [path for path in published if is_cube_file(path)]
+        changed.extend(path for path in self._changed_cubes() if path not in changed)
+        changed.sort(
+            key=lambda path: path.stat().st_mtime_ns if path.exists() else 0,
+            reverse=True,
+        )
         if not changed:
             self._set_inputs_locked(False)
             self.start_button.setEnabled(True)
@@ -1027,6 +1109,7 @@ class DirectWorkflowPage(QWidget):
         self.before_intermediates.clear()
         self.generated_intermediates.clear()
         self.scan_directories.clear()
+        self._remove_empty_multiwfn_work_dir()
         self.cancel_requested = False
         self.file_info_frame.hide()
         self.file_info_label.clear()
@@ -1072,3 +1155,4 @@ class DirectWorkflowPage(QWidget):
     def cleanup(self) -> None:
         if not self.is_running():
             self._cleanup_temp_tcl()
+            self._remove_empty_multiwfn_work_dir()

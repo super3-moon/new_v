@@ -911,6 +911,13 @@ class AutomaticWorkflowsPage(QWidget):
         self.keep_cubes_check.setChecked(True)
         self.keep_cubes_check.toggled.connect(self._configuration_changed)
         options.addWidget(self.keep_cubes_check)
+        self.show_extrema_check = QCheckBox("显示表面静电势极值点")
+        self.show_extrema_check.setChecked(False)
+        self.show_extrema_check.setToolTip(
+            "在 VMD 中用橙色小球显示极大点、青色小球显示极小点。"
+        )
+        self.show_extrema_check.toggled.connect(self._configuration_changed)
+        options.addWidget(self.show_extrema_check)
         options.addStretch(1)
         self.advanced_toggle = QCheckBox("显示高级设置")
         options.addWidget(self.advanced_toggle)
@@ -1254,6 +1261,7 @@ class AutomaticWorkflowsPage(QWidget):
     def _on_render_mode_changed(self, *_args) -> None:
         draws_image = self.render_mode_combo.currentData() != "cubes_only"
         self.image_size_combo.setEnabled(draws_image)
+        self.show_extrema_check.setEnabled(draws_image)
         self._configuration_changed()
 
     def _on_image_size_changed(self, *_args) -> None:
@@ -1336,6 +1344,7 @@ class AutomaticWorkflowsPage(QWidget):
             "height": int(height),
             "output_location": str(self.output_location_combo.currentData() or "result_root"),
             "keep_cubes": self.keep_cubes_check.isChecked(),
+            "show_extrema": self.show_extrema_check.isChecked(),
             "vmd_timeout_seconds": int(self.vmd_timeout_spin.value()),
         }
 
@@ -2009,6 +2018,7 @@ class AutomaticWorkflowsPage(QWidget):
             self.custom_height_spin.setValue(max(240, min(4320, height)))
         self.image_size_combo.setCurrentIndex(size_index)
         self.keep_cubes_check.setChecked(bool(saved.get("keep_cubes", True)))
+        self.show_extrema_check.setChecked(bool(saved.get("show_extrema", False)))
         self.vmd_timeout_spin.setValue(
             max(30, min(86400, int(saved.get("vmd_timeout_seconds") or 600)))
         )
