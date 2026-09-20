@@ -23,7 +23,7 @@
 - **ESP 表面映射**：自动配对电子密度与静电势 Cube，校验网格一致性，并提供 BWR、Turbo、半透明、边缘玻璃和线框等预设。
 - **风格管理**：提供套装与骨架/等值面拆分模式，支持搜索、材质筛选、排序和参数调整。
 - **自定义风格**：可从 VMD Save State 导入，也可使用 OpenAI 或 Gemini 辅助识别参考图风格。
-- **全自动流程**：内置表面静电势图和分子轨道能级图；自动完成计算、校验、统一绘图与结果整理。
+- **全自动流程**：内置 ESP、轨道能级图、IRI/RDG/IGMH、Fukui/双描述符、空穴-电子/NTO、自旋密度及 ALIE/LEA/LEAE；自动完成计算、校验、Tachyon 绘图与结果整理。
 - **批量 Multiwfn**：录制或导入命令序列，预检后批量执行，并汇总日志、结果和 CSV。
 - **结果保护**：任务使用独立工作目录，避免固定文件名互相覆盖；渲染结果可保存到输入目录或指定目录。
 - **桌面体验**：支持深浅主题、响应式布局和常用快捷键。
@@ -91,6 +91,16 @@ python .\vmd_style_tool_qt6.py
 
 运行页面会显示当前阶段、参考进度、逐任务耗时和关键说明。若检测到某个所选轨道与其余轨道的能量差距异常大，软件会先提示检查并由用户确认是否继续。任务文件夹最外层直接放置 PNG 与可浏览的 HTML 能级图；SVG、单轨道图片、轨道数据、Cube、过程文件、日志和任务记录分别进入对应分类目录，运行后产生的空目录会自动清理。填写“复用上次结果”后，相同波函数、相同精度的重叠轨道会直接读取既有 Cube；视角与绘图参数也一致时还会复用已渲染图片。修改视角或绘图失败时仍可从相应阶段继续。
 
+#### 其他科学分析流程
+
+- **弱相互作用**：在同一入口选择 IRI、RDG/NCI 或 IGMH；IGMH 以分号分隔片段定义。指标等值面和颜色范围采用 Multiwfn 内置示例的科学参数，骨架、材质和灯光仍由绘图方案控制。
+- **Fukui 与双描述符**：读取相同几何和计算水平的 N、N+1、N-1 波函数，输出 `f+`、`f-`、`f0` 与双描述符。
+- **激发态空穴-电子与 NTO**：配对波函数和 Gaussian/ORCA 输出，选择激发态序号；可生成叠加的空穴-电子图、CDD，或按 NTO 本征值自动绘制主导 NTO 对。
+- **自旋密度**：面向开壳层波函数，生成正负相位自旋密度图。
+- **局域反应性表面**：选择 ALIE、LEA 或 LEAE，按照 Multiwfn 随附脚本中的密度等值面与映射范围绘图。
+
+这些流程共用同一套输入校验、后台运行、实时参考进度、VMD/Tachyon 渲染和结果整理。核心 PNG（以及 NTO 波函数）位于任务目录最外层，Cube 与日志分别归档；VMD 1.9.3 的旧版路径限制由软件内部的英文临时工作区处理，不改变用户选择的结果目录。
+
 ### 批量处理
 
 1. 添加输入文件或扫描文件夹。
@@ -115,6 +125,8 @@ vmd_style_tool.py              # 风格、VMD Tcl 与脚本生成核心
 direct_workflow_qt6.py         # 直接绘图流程
 automatic_workflows.py         # 全自动流程规划与执行核心
 automatic_workflows_qt6.py     # 全自动流程目录、配置与结果界面
+scientific_workflows.py        # IRI/Fukui/NTO/自旋密度/ALIE 等共享执行核心
+scientific_workflows_qt6.py    # 新增科学分析流程的共用配置界面
 orbital_data.py                # Gaussian/ORCA 轨道数据解析与文件核验
 orbital_vmd.py                 # VMD 完整状态捕获与 Tachyon 复现
 orbital_diagram_workflow.py    # 分子轨道能级图执行与结果收集
@@ -124,8 +136,7 @@ multiwfn_batch.py              # 批处理规划与执行核心
 multiwfn_batch_qt6.py          # 批处理工作台界面
 multiwfn_recorder_qt6.py       # Multiwfn 操作录制
 style_parameter_dialog_qt6.py  # 风格参数查看与编辑
-vmd_cube_styles/               # 内置风格图片与 VMD 资源
-tests/                         # 自动化测试
+vmd_cube_styles/               # 内置且实际使用的风格预览资源
 ```
 
 ## 构建与测试
@@ -134,12 +145,6 @@ tests/                         # 自动化测试
 
 ```powershell
 python .\vmd_style_tool_qt6.py --self-test
-```
-
-运行完整测试：
-
-```powershell
-python -m unittest discover -s tests -v
 ```
 
 构建 Windows 可执行文件：

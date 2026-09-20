@@ -1,0 +1,488 @@
+"""Qt page shared by the additional data-driven automatic workflows."""
+
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+from typing import Callable
+
+from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+import scientific_workflows as science
+import vmd_style_tool as core
+
+
+class _ScientificWorker(QObject):
+    event = Signal(object)
+    finished = Signal(object, object)
+
+    def __init__(
+        self,
+        workflow_id: str,
+        method: str,
+        inputs: dict,
+        options: dict,
+        output_root: Path,
+        multiwfn_exe: Path,
+        vmd_exe: Path,
+    ) -> None:
+        super().__init__()
+        self.args = (
+            workflow_id,
+            method,
+            inputs,
+            options,
+            output_root,
+            multiwfn_exe,
+            vmd_exe,
+        )
+        self.runner: science.ScientificWorkflowRunner | None = None
+        self._cancel_pending = False
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.runner = science.ScientificWorkflowRunner(
+                *self.args, event_callback=self.event.emit
+            )
+            if self._cancel_pending:
+                self.runner.cancel()
+            result = self.runner.run()
+        except Exception as exc:
+            self.finished.emit(None, exc)
+            return
+        self.finished.emit(result, None)
+
+    def cancel(self) -> None:
+        self._cancel_pending = True
+        if self.runner is not None:
+            self.runner.cancel()
+
+
+class ScientificWorkflowPage(QWidget):
+    backRequested = Signal()
+    settingsChanged = Signal(object)
+
+    def __init__(
+        self,
+        storage_dir: Path,
+        multiwfn_path_getter: Callable[[], str],
+        vmd_path_getter: Callable[[], str],
+        style_dialog_factory,
+    ) -> None:
+        super().__init__()
+        self.storage_dir = Path(storage_dir)
+        self.multiwfn_path_getter = multiwfn_path_getter
+        self.vmd_path_getter = vmd_path_getter
+        self.style_dialog_factory = style_dialog_factory
+        self.spec = science.workflow_specs()[0]
+        self.style_snapshot: dict = {}
+        self.thread: QThread | None = None
+        self.worker: _ScientificWorker | None = None
+        self.last_run_dir = ""
+        self.role_rows: dict[str, tuple[QLabel, QLineEdit, QPushButton]] = {}
+        self._build_ui()
+        self.configure(self.spec.id)
+
+    @staticmethod
+    def _card(title: str, hint: str = "") -> tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setObjectName("batchCard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(16, 15, 16, 16)
+        layout.setSpacing(10)
+        heading = QLabel(title)
+        heading.setObjectName("batchCardTitle")
+        layout.addWidget(heading)
+        if hint:
+            helper = QLabel(hint)
+            helper.setObjectName("batchHint")
+            helper.setWordWrap(True)
+            layout.addWidget(helper)
+        return frame, layout
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(10)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("batchToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(12, 8, 12, 8)
+        back = QPushButton("返回全部流程")
+        back.clicked.connect(self.backRequested.emit)
+        toolbar_layout.addWidget(back)
+        self.toolbar_title = QLabel()
+        self.toolbar_title.setObjectName("batchToolbarLabel")
+        toolbar_layout.addWidget(self.toolbar_title)
+        toolbar_layout.addStretch(1)
+        self.ready_badge = QLabel("等待配置")
+        self.ready_badge.setObjectName("batchPresetInline")
+        toolbar_layout.addWidget(self.ready_badge)
+        root.addWidget(toolbar)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(4, 4, 8, 8)
+        layout.setSpacing(12)
+
+        method_card, method_layout = self._card(
+            "1 · 选择分析方法",
+            "同类方法共用文件校验、Multiwfn 调用、进度反馈、VMD 渲染和结果整理。",
+        )
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("分析方法"))
+        self.method_combo = QComboBox()
+        self.method_combo.currentIndexChanged.connect(self._sync_method_options)
+        method_row.addWidget(self.method_combo, 1)
+        method_layout.addLayout(method_row)
+        self.method_note = QLabel()
+        self.method_note.setObjectName("detailLabel")
+        self.method_note.setWordWrap(True)
+        method_layout.addWidget(self.method_note)
+        layout.addWidget(method_card)
+
+        input_card, input_layout = self._card(
+            "2 · 添加计算文件",
+            "程序只读取原文件；计算产生的 Cube、日志和图片会写入新的任务目录。",
+        )
+        self.input_form = QFormLayout()
+        self.input_form.setHorizontalSpacing(12)
+        self.input_form.setVerticalSpacing(9)
+        input_layout.addLayout(self.input_form)
+        layout.addWidget(input_card)
+
+        settings_card, settings_layout = self._card(
+            "3 · 计算与绘图设置",
+            "网格质量 2 是手册中的中等质量设置，适合作为日常默认值；高质量会显著增加时间和内存占用。",
+        )
+        settings_form = QFormLayout()
+        self.grid_combo = QComboBox()
+        self.grid_combo.addItem("快速预览", 1)
+        self.grid_combo.addItem("中等质量（推荐）", 2)
+        self.grid_combo.addItem("高质量", 3)
+        self.grid_combo.setCurrentIndex(1)
+        settings_form.addRow("空间网格", self.grid_combo)
+
+        self.state_spin = QSpinBox()
+        self.state_spin.setRange(1, 9999)
+        self.state_spin.setValue(1)
+        settings_form.addRow("激发态序号", self.state_spin)
+        self.state_label = settings_form.labelForField(self.state_spin)
+
+        self.nto_pairs_spin = QSpinBox()
+        self.nto_pairs_spin.setRange(1, 10)
+        self.nto_pairs_spin.setValue(1)
+        settings_form.addRow("主导 NTO 对数", self.nto_pairs_spin)
+        self.nto_pairs_label = settings_form.labelForField(self.nto_pairs_spin)
+
+        self.fragments_edit = QLineEdit()
+        self.fragments_edit.setPlaceholderText("例如：1-12;13-25")
+        settings_form.addRow("IGMH 片段", self.fragments_edit)
+        self.fragments_label = settings_form.labelForField(self.fragments_edit)
+        settings_layout.addLayout(settings_form)
+
+        style_row = QHBoxLayout()
+        style_row.addWidget(QLabel("绘图方案"))
+        self.style_label = QLabel("尚未选择")
+        self.style_label.setObjectName("detailLabel")
+        self.style_label.setWordWrap(True)
+        style_row.addWidget(self.style_label, 1)
+        choose_style = QPushButton("选择绘图方案")
+        choose_style.clicked.connect(self._choose_style)
+        style_row.addWidget(choose_style)
+        settings_layout.addLayout(style_row)
+
+        output_row = QHBoxLayout()
+        self.output_edit = QLineEdit(str(self.storage_dir / "automatic_runs"))
+        browse_output = QPushButton("选择目录")
+        browse_output.clicked.connect(self._browse_output)
+        output_row.addWidget(self.output_edit, 1)
+        output_row.addWidget(browse_output)
+        settings_layout.addWidget(QLabel("结果保存位置"))
+        settings_layout.addLayout(output_row)
+        self.keep_cubes = QCheckBox("保留 Cube 文件")
+        self.keep_cubes.setChecked(True)
+        settings_layout.addWidget(self.keep_cubes)
+        layout.addWidget(settings_card)
+
+        run_card, run_layout = self._card(
+            "4 · 运行与结果",
+            "核心 PNG 和 NTO 波函数放在任务目录最外层；Cube 与日志分别归档。",
+        )
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("等待运行")
+        run_layout.addWidget(self.progress)
+        buttons = QHBoxLayout()
+        self.start_button = QPushButton("开始全自动流程")
+        self.start_button.setObjectName("primaryBtn")
+        self.start_button.clicked.connect(self._start)
+        self.cancel_button = QPushButton("停止")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel)
+        self.open_button = QPushButton("打开结果目录")
+        self.open_button.setEnabled(False)
+        self.open_button.clicked.connect(self._open_result)
+        buttons.addWidget(self.start_button)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.open_button)
+        buttons.addStretch(1)
+        run_layout.addLayout(buttons)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(300)
+        self.log.setMinimumHeight(145)
+        run_layout.addWidget(self.log)
+        layout.addWidget(run_card)
+        layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("batchPageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
+
+    def configure(self, workflow_id: str) -> None:
+        self.spec = science.workflow_spec(workflow_id)
+        self.toolbar_title.setText(self.spec.name)
+        self.method_combo.blockSignals(True)
+        self.method_combo.clear()
+        for value, label in self.spec.methods:
+            self.method_combo.addItem(label, value)
+        self.method_combo.blockSignals(False)
+        while self.input_form.rowCount():
+            self.input_form.removeRow(0)
+        self.role_rows.clear()
+        for role, label, _extensions in self.spec.input_roles:
+            editor = QLineEdit()
+            editor.setPlaceholderText(f"选择{label}")
+            button = QPushButton("浏览")
+            button.clicked.connect(lambda _checked=False, key=role: self._browse_input(key))
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(editor, 1)
+            row_layout.addWidget(button)
+            label_widget = QLabel(label)
+            self.input_form.addRow(label_widget, row)
+            self.role_rows[role] = (label_widget, editor, button)
+        if str(self.style_snapshot.get("style", {}).get("surface_mode") or "") != self.spec.surface_mode:
+            self.style_snapshot = self._default_style_snapshot()
+        self._sync_style_label()
+        self._sync_method_options()
+        self.progress.setValue(0)
+        self.progress.setFormat("等待运行")
+        self.ready_badge.setText("等待配置")
+
+    def _default_style_snapshot(self) -> dict:
+        styles = [
+            copy.deepcopy(item)
+            for item in core.get_all_bundle_styles()
+            if str(item.get("surface_mode") or "signed") == self.spec.surface_mode
+        ]
+        if not styles:
+            return {}
+        style = styles[0]
+        return {
+            "style": style,
+            "rep0_commands": list(style.get("rep0_commands") or []),
+            "selection_text": f"套装风格：{style.get('name')}",
+            "mode": "bundle",
+            "bundle_id": str(style.get("id") or ""),
+        }
+
+    def _sync_method_options(self) -> None:
+        method = str(self.method_combo.currentData() or "")
+        self.state_spin.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
+        self.state_label.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
+        self.nto_pairs_spin.setVisible(
+            self.spec.id == science.WORKFLOW_EXCITED and method == "nto"
+        )
+        self.nto_pairs_label.setVisible(
+            self.spec.id == science.WORKFLOW_EXCITED and method == "nto"
+        )
+        self.fragments_edit.setVisible(
+            self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
+        )
+        self.fragments_label.setVisible(
+            self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
+        )
+        notes = {
+            "igmh": "片段使用 Multiwfn 原子选择语法，并用分号分开。程序不会静默修改全局 settings.ini。",
+            "strict": "三个体系必须具有相同几何、基组与理论水平；输入顺序会按 N、N+1、N-1 传给 Multiwfn。",
+            "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
+            "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
+            "spin": "仅适用于包含有效开壳层信息的波函数。",
+            "alie": "使用电子密度等值面映射平均局域离化能。",
+            "lea": "使用电子密度等值面映射局域电子亲和能。",
+            "leae": "使用电子密度等值面映射 LEAE。",
+        }
+        self.method_note.setText(notes.get(method, self.spec.description))
+
+    def _browse_input(self, role: str) -> None:
+        role_info = next((item for item in self.spec.input_roles if item[0] == role), None)
+        if role_info is None:
+            return
+        _role, label, extensions = role_info
+        patterns = " ".join(f"*{ext}" for ext in extensions)
+        chosen, _ = QFileDialog.getOpenFileName(self, f"选择{label}", "", f"支持的文件 ({patterns});;所有文件 (*)")
+        if chosen:
+            self.role_rows[role][1].setText(chosen)
+
+    def _browse_output(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(self, "选择结果保存目录", self.output_edit.text().strip())
+        if chosen:
+            self.output_edit.setText(chosen)
+
+    def _choose_style(self) -> None:
+        dialog = self.style_dialog_factory(
+            self.style_snapshot,
+            self,
+            surface_mode=self.spec.surface_mode,
+        )
+        if dialog.exec():
+            self.style_snapshot = dialog.selection()
+            self._sync_style_label()
+
+    def _sync_style_label(self) -> None:
+        self.style_label.setText(
+            str(self.style_snapshot.get("selection_text") or "尚未选择兼容的绘图方案")
+        )
+
+    def _start(self) -> None:
+        if self.is_running():
+            return
+        inputs = {role: editor.text().strip() for role, (_label, editor, _button) in self.role_rows.items()}
+        output = self.output_edit.text().strip()
+        options = {
+            "grid_quality": int(self.grid_combo.currentData() or 2),
+            "excited_state": self.state_spin.value(),
+            "nto_pairs": self.nto_pairs_spin.value(),
+            "fragments": self.fragments_edit.text().strip(),
+            "keep_cubes": self.keep_cubes.isChecked(),
+            "style_snapshot": copy.deepcopy(self.style_snapshot),
+            "width": 1400,
+            "height": 1050,
+        }
+        self.log.clear()
+        self.log.appendPlainText(f"开始：{self.spec.name} / {self.method_combo.currentText()}")
+        self.progress.setValue(1)
+        self.progress.setFormat("正在启动")
+        self.start_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.open_button.setEnabled(False)
+        self.ready_badge.setText("运行中")
+        self.thread = QThread(self)
+        self.worker = _ScientificWorker(
+            self.spec.id,
+            str(self.method_combo.currentData() or ""),
+            inputs,
+            options,
+            Path(output),
+            Path(self.multiwfn_path_getter()),
+            Path(self.vmd_path_getter()),
+        )
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.event.connect(self._on_event)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self._cleanup_thread)
+        self.settingsChanged.emit(
+            {
+                "scientific_workflow_settings": {
+                    "output_dir": output,
+                    "grid_quality": options["grid_quality"],
+                    "keep_cubes": options["keep_cubes"],
+                }
+            }
+        )
+        self.thread.start()
+
+    @Slot(object)
+    def _on_event(self, event: object) -> None:
+        if not isinstance(event, dict):
+            return
+        progress = int(round(float(event.get("progress") or 0)))
+        message = str(event.get("message") or "处理中")
+        self.progress.setValue(progress)
+        self.progress.setFormat(f"{progress}% · {message}")
+        if not self.log.toPlainText().endswith(message):
+            self.log.appendPlainText(message)
+
+    @Slot(object, object)
+    def _on_finished(self, result: object, error: object) -> None:
+        self.start_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        if error is not None:
+            self.progress.setValue(100)
+            self.progress.setFormat("运行失败")
+            self.ready_badge.setText("失败")
+            self.log.appendPlainText(f"失败：{error}")
+            return
+        payload = result if isinstance(result, dict) else {}
+        self.last_run_dir = str(payload.get("run_dir") or "")
+        self.progress.setValue(100)
+        self.progress.setFormat("100% · 已完成")
+        self.ready_badge.setText("已完成")
+        self.log.appendPlainText(f"结果：{self.last_run_dir}")
+        self.open_button.setEnabled(bool(self.last_run_dir))
+
+    def _open_result(self) -> None:
+        path = Path(self.last_run_dir)
+        if path.is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
+
+    def is_running(self) -> bool:
+        return self.thread is not None and self.thread.isRunning()
+
+    def cancel(self) -> None:
+        if self.worker is not None:
+            self.cancel_button.setEnabled(False)
+            self.progress.setFormat("正在停止")
+            self.worker.cancel()
+
+    def _cleanup_thread(self) -> None:
+        if self.worker is not None:
+            self.worker.deleteLater()
+        if self.thread is not None:
+            self.thread.deleteLater()
+        self.worker = None
+        self.thread = None
+
+    def cleanup(self) -> None:
+        self.cancel()
+
+    def load_settings(self, config: dict) -> None:
+        saved = config.get("scientific_workflow_settings")
+        if not isinstance(saved, dict):
+            return
+        self.output_edit.setText(str(saved.get("output_dir") or self.output_edit.text()))
+        index = self.grid_combo.findData(int(saved.get("grid_quality") or 2))
+        self.grid_combo.setCurrentIndex(max(0, index))
+        self.keep_cubes.setChecked(bool(saved.get("keep_cubes", True)))

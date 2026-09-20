@@ -26,6 +26,11 @@ import vmd_style_tool as vmd_core
 AUTOMATION_SCHEMA_VERSION = 1
 WORKFLOW_SURFACE_ESP = "surface_esp"
 WORKFLOW_ORBITAL_DIAGRAM = "orbital_energy_diagram"
+WORKFLOW_WEAK_INTERACTION = "weak_interaction"
+WORKFLOW_FUKUI_DESCRIPTOR = "fukui_descriptor"
+WORKFLOW_EXCITED_STATE = "excited_state_density"
+WORKFLOW_SPIN_DENSITY = "spin_density"
+WORKFLOW_LOCAL_REACTIVITY = "local_reactivity_surface"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -115,6 +120,48 @@ def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
             ),
             handler="orbital_diagram",
             input_mode="paired_qc_wavefunction",
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_WEAK_INTERACTION,
+            name="弱相互作用分析",
+            description="统一生成 IRI、RDG/NCI 或 IGMH 网格并交给 VMD 绘图。",
+            engine="Multiwfn + VMD",
+            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
+            handler="scientific_workflow",
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_FUKUI_DESCRIPTOR,
+            name="Fukui 与双描述符",
+            description="使用 N、N+1、N-1 波函数生成严格 CDFT 反应性网格。",
+            engine="Multiwfn + VMD",
+            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
+            handler="scientific_workflow",
+            input_mode="three_charge_states",
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_EXCITED_STATE,
+            name="激发态空穴-电子与 NTO",
+            description="读取激发态输出并生成空穴/电子、CDD 或主导 NTO 图像。",
+            engine="Multiwfn + VMD",
+            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS + (".out", ".log"),
+            handler="scientific_workflow",
+            input_mode="paired_qc_wavefunction",
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_SPIN_DENSITY,
+            name="自旋密度",
+            description="为开壳层体系生成带正负相位的自旋密度图。",
+            engine="Multiwfn + VMD",
+            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
+            handler="scientific_workflow",
+        ),
+        WorkflowDefinition(
+            id=WORKFLOW_LOCAL_REACTIVITY,
+            name="局域反应性表面",
+            description="生成 ALIE、LEA 或 LEAE 数据并映射到电子密度表面。",
+            engine="Multiwfn + VMD",
+            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
+            handler="scientific_workflow",
         ),
     )
 

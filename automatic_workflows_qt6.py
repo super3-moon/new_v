@@ -10,9 +10,11 @@ from typing import Callable, Iterable
 
 import automatic_workflows as automation
 import qt_feedback
+import scientific_workflows as science
 import user_feedback
 import vmd_style_tool as core
 from orbital_diagram_qt6 import OrbitalDiagramPage
+from scientific_workflows_qt6 import ScientificWorkflowPage
 from style_parameter_dialog_qt6 import StyleParameterDialog
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices, QDoubleValidator, QPainter, QPixmap
@@ -670,6 +672,17 @@ class AutomaticWorkflowsPage(QWidget):
             lambda: self.page_stack.setCurrentIndex(0)
         )
         self.orbital_page_index = self.page_stack.addWidget(self.orbital_page)
+        self.scientific_page = ScientificWorkflowPage(
+            self.storage_dir,
+            self.multiwfn_path_getter,
+            self.vmd_path_getter,
+            AutomationStyleDialog,
+        )
+        self.scientific_page.settingsChanged.connect(self.settingsChanged.emit)
+        self.scientific_page.backRequested.connect(
+            lambda: self.page_stack.setCurrentIndex(0)
+        )
+        self.scientific_page_index = self.page_stack.addWidget(self.scientific_page)
         self.page_stack.setCurrentIndex(0)
 
     def _build_catalog_page(self) -> QWidget:
@@ -746,12 +759,55 @@ class AutomaticWorkflowsPage(QWidget):
             self.orbital_start_button, 0, Qt.AlignmentFlag.AlignVCenter
         )
         layout.addWidget(orbital_card)
+
+        for spec in science.workflow_specs():
+            card = QFrame()
+            card.setObjectName("batchCard")
+            card_layout = QHBoxLayout(card)
+            card_layout.setContentsMargins(20, 18, 20, 18)
+            card_layout.setSpacing(18)
+            card_icon = QLabel(spec.icon)
+            card_icon.setObjectName("batchEmptyIcon")
+            card_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_icon.setFixedSize(74, 74)
+            card_layout.addWidget(card_icon)
+            card_text = QVBoxLayout()
+            card_text.setSpacing(5)
+            card_title = QLabel(spec.name)
+            card_title.setObjectName("batchCardTitle")
+            card_description = QLabel(spec.description)
+            card_description.setObjectName("batchHint")
+            card_description.setWordWrap(True)
+            card_tags = QLabel(spec.tags)
+            card_tags.setObjectName("detailLabel")
+            card_tags.setWordWrap(True)
+            card_text.addWidget(card_title)
+            card_text.addWidget(card_description)
+            card_text.addWidget(card_tags)
+            card_layout.addLayout(card_text, 1)
+            card_start = QPushButton("开始配置")
+            card_start.setObjectName("primaryBtn")
+            card_start.setMinimumHeight(42)
+            card_start.clicked.connect(
+                lambda _checked=False, workflow_id=spec.id: self._show_scientific_page(
+                    workflow_id
+                )
+            )
+            card_layout.addWidget(
+                card_start, 0, Qt.AlignmentFlag.AlignVCenter
+            )
+            layout.addWidget(card)
         layout.addStretch(1)
         return self._scroll_page(body, 420)
 
     def _show_orbital_page(self) -> None:
         if hasattr(self, "orbital_page_index"):
             self.page_stack.setCurrentIndex(self.orbital_page_index)
+
+    def _show_scientific_page(self, workflow_id: str) -> None:
+        if hasattr(self, "scientific_page_index"):
+            self.scientific_page.configure(workflow_id)
+            self.page_stack.setCurrentIndex(self.scientific_page_index)
 
     def _build_configuration_page(self) -> QWidget:
         page = QWidget()
@@ -1953,7 +2009,11 @@ class AutomaticWorkflowsPage(QWidget):
         orbital_running = (
             hasattr(self, "orbital_page") and self.orbital_page.is_running()
         )
-        return bool(esp_running or orbital_running)
+        scientific_running = (
+            hasattr(self, "scientific_page")
+            and self.scientific_page.is_running()
+        )
+        return bool(esp_running or orbital_running or scientific_running)
 
     def cancel(self) -> None:
         if self.thread is not None and self.thread.isRunning():
@@ -1965,6 +2025,8 @@ class AutomaticWorkflowsPage(QWidget):
                 self.worker.cancel()
         if hasattr(self, "orbital_page") and self.orbital_page.is_running():
             self.orbital_page.cancel()
+        if hasattr(self, "scientific_page") and self.scientific_page.is_running():
+            self.scientific_page.cancel()
 
     def _cleanup_thread(self) -> None:
         self._runtime_timer.stop()
@@ -1979,6 +2041,8 @@ class AutomaticWorkflowsPage(QWidget):
         self.cancel()
         if hasattr(self, "orbital_page"):
             self.orbital_page.cleanup()
+        if hasattr(self, "scientific_page"):
+            self.scientific_page.cleanup()
 
     def load_settings(self, config: dict) -> None:
         output = str(
@@ -1988,6 +2052,8 @@ class AutomaticWorkflowsPage(QWidget):
         self.output_dir_edit.setText(output)
         if hasattr(self, "orbital_page"):
             self.orbital_page.load_settings(config)
+        if hasattr(self, "scientific_page"):
+            self.scientific_page.load_settings(config)
         saved = config.get("automatic_workflow_settings")
         if not isinstance(saved, dict):
             self._sync_summary()

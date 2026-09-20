@@ -26,6 +26,23 @@ vmd19.3/
 /batch/
 /file/
 /tmp/
+/output/
+/tests/
+
+# Historical style references kept locally but unused by the application and build
+/vmd_cube_styles/01_dual_color_basic.png
+/vmd_cube_styles/03_surface_vertex_pt.png
+/vmd_cube_styles/09_tachyon_fullshade_raster3d.jpg
+/vmd_cube_styles/11_rdg_depthcue_off.png
+/vmd_cube_styles/12_rdg_light3_on.png
+/vmd_cube_styles/15_bbs_edgy_example2.jpg
+/vmd_cube_styles/16_bbs_edgy_example3.jpg
+/vmd_cube_styles/17_bbs_edgy_example4.jpg
+/vmd_cube_styles/20_sob449_3.jpg
+/vmd_cube_styles/21_sob449_4.jpg
+/vmd_cube_styles/22_sob449_5.jpg
+/vmd_cube_styles/edgy.vmd
+/vmd_cube_styles/goodsell.vmd
 
 # Local machine configuration
 vmd_style_tool_config.json

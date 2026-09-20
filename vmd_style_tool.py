@@ -2220,6 +2220,7 @@ def load_config() -> dict:
         "batch_last_preset": "builtin_export_xyz",
         "automatic_output_dir": str(ROOT / "automatic_runs"),
         "automatic_workflow_settings": {},
+        "scientific_workflow_settings": {},
         "orbital_diagram_output_dir": str(ROOT / "orbital_diagram_runs"),
         "orbital_diagram_settings": {},
     }
@@ -2270,6 +2271,9 @@ def save_config(config: dict) -> None:
             ),
             "automatic_workflow_settings": value(
                 "automatic_workflow_settings", {}
+            ),
+            "scientific_workflow_settings": value(
+                "scientific_workflow_settings", {}
             ),
             "orbital_diagram_output_dir": value(
                 "orbital_diagram_output_dir", str(ROOT / "orbital_diagram_runs")
