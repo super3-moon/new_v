@@ -11,6 +11,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -200,6 +201,15 @@ class ScientificWorkflowPage(QWidget):
         self.fragments_edit.setPlaceholderText("例如：1-12;13-25")
         settings_form.addRow("IGMH 片段", self.fragments_edit)
         self.fragments_label = settings_form.labelForField(self.fragments_edit)
+
+        self.iso_spin = QDoubleSpinBox()
+        self.iso_spin.setDecimals(4)
+        self.iso_spin.setRange(0.0001, 1.0)
+        self.iso_spin.setSingleStep(0.005)
+        self.iso_spin.setValue(0.05)
+        self.iso_spin.setSuffix(" a.u.")
+        settings_form.addRow("正负等值面", self.iso_spin)
+        self.iso_label = settings_form.labelForField(self.iso_spin)
         settings_layout.addLayout(settings_form)
 
         style_row = QHBoxLayout()
@@ -332,15 +342,19 @@ class ScientificWorkflowPage(QWidget):
         self.fragments_label.setVisible(
             self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
         )
+        show_iso = self.spec.id == science.WORKFLOW_DEFORMATION
+        self.iso_spin.setVisible(show_iso)
+        self.iso_label.setVisible(show_iso)
         notes = {
             "igmh": "片段使用 Multiwfn 原子选择语法，并用分号分开。程序不会静默修改全局 settings.ini。",
             "strict": "三个体系必须具有相同几何、基组与理论水平；输入顺序会按 N、N+1、N-1 传给 Multiwfn。",
             "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
             "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
             "spin": "仅适用于包含有效开壳层信息的波函数。",
-            "alie": "使用电子密度等值面映射平均局域离化能。",
-            "lea": "使用电子密度等值面映射局域电子亲和能。",
-            "leae": "使用电子密度等值面映射 LEAE。",
+            "deformation": (
+                "按 Multiwfn 手册以同一几何下的分子密度减去球对称自由原子密度；"
+                "程序会使用 Multiwfn 随附的 atomwfn 数据，不会额外调用 Gaussian。"
+            ),
         }
         self.method_note.setText(notes.get(method, self.spec.description))
 
@@ -384,6 +398,7 @@ class ScientificWorkflowPage(QWidget):
             "excited_state": self.state_spin.value(),
             "nto_pairs": self.nto_pairs_spin.value(),
             "fragments": self.fragments_edit.text().strip(),
+            "iso_value": self.iso_spin.value(),
             "keep_cubes": self.keep_cubes.isChecked(),
             "style_snapshot": copy.deepcopy(self.style_snapshot),
             "width": 1400,

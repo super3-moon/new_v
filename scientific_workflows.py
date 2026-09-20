@@ -33,7 +33,7 @@ WORKFLOW_WEAK = "weak_interaction"
 WORKFLOW_FUKUI = "fukui_descriptor"
 WORKFLOW_EXCITED = "excited_state_density"
 WORKFLOW_SPIN = "spin_density"
-WORKFLOW_LOCAL = "local_reactivity_surface"
+WORKFLOW_DEFORMATION = "density_difference_deformation"
 
 WAVEFUNCTION_EXTENSIONS = (
     ".fch",
@@ -116,14 +116,14 @@ _SPECS = (
         "开壳层 · 正负自旋密度 · VMD",
     ),
     ScientificWorkflowSpec(
-        WORKFLOW_LOCAL,
-        "局域反应性表面",
-        "ALIE",
-        "生成 ALIE、LEA 或 LEAE 数据，并映射到对应电子密度等值面。",
-        (("alie", "ALIE"), ("lea", "LEA"), ("leae", "LEAE")),
-        (("wavefunction", "波函数文件", WAVEFUNCTION_EXTENSIONS),),
-        "volume_mapped",
-        "ALIE · LEA · LEAE · 表面映射",
+        WORKFLOW_DEFORMATION,
+        "电子密度差／变形密度",
+        "Δρ",
+        "计算分子电子密度与同一几何下自由原子叠加密度之差，并绘制电子积累与耗散区域。",
+        (("deformation", "变形密度（分子密度 − 自由原子密度）"),),
+        (("wavefunction", "分子波函数文件", WAVEFUNCTION_EXTENSIONS),),
+        "signed",
+        "变形密度 · 电子积累/耗散 · VMD",
     ),
 )
 
@@ -262,13 +262,12 @@ def build_multiwfn_sequence(
     if workflow_id == WORKFLOW_SPIN:
         return f"5\n5\n{grid}\n2\n0\nq\n"
 
-    if workflow_id == WORKFLOW_LOCAL:
-        if method == "alie":
-            return f"5\n1\n{grid}\n2\n0\n5\n18\n{grid}\n2\n0\nq\n"
-        function = "27" if method == "lea" else "-27" if method == "leae" else ""
-        if not function:
-            raise ScientificWorkflowValidationError("未知的局域反应性方法。")
-        return f"1000\n2\n{function}\n5\n1\n{grid}\n2\n0\n5\n100\n{grid}\n2\n0\nq\n"
+    if workflow_id == WORKFLOW_DEFORMATION:
+        if method != "deformation":
+            raise ScientificWorkflowValidationError("未知的电子密度差方法。")
+        # Multiwfn manual 3.7.2 / tutorial 4.2.8: main function 5,
+        # deformation property (-2), electron density (1), export Cube (2).
+        return f"5\n-2\n1\n{grid}\n2\n0\nq\n"
 
     raise ScientificWorkflowValidationError(f"未知的自动化流程：{workflow_id}")
 
@@ -282,12 +281,17 @@ def _expected_products(workflow_id: str, method: str) -> tuple[str, ...]:
         return ("hole.cub", "electron.cub", "CDD.cub")
     if workflow_id == WORKFLOW_SPIN:
         return ("spindensity.cub",)
-    if workflow_id == WORKFLOW_LOCAL:
-        return ("density.cub", "avglocion.cub" if method == "alie" else "userfunc.cub")
+    if workflow_id == WORKFLOW_DEFORMATION:
+        return ("density.cub",)
     return ()
 
 
-def _render_pairs(workflow_id: str, method: str, cubes: Mapping[str, Path]) -> list[tuple[str, Path, Path | None, float]]:
+def _render_pairs(
+    workflow_id: str,
+    method: str,
+    cubes: Mapping[str, Path],
+    options: Mapping[str, object] | None = None,
+) -> list[tuple[str, Path, Path | None, float]]:
     if workflow_id == WORKFLOW_WEAK:
         if method == "igmh":
             return [("IGMH_inter", cubes["dg_inter.cub"], cubes["sl2r.cub"], 0.01)]
@@ -299,10 +303,10 @@ def _render_pairs(workflow_id: str, method: str, cubes: Mapping[str, Path]) -> l
                 1.0 if method == "iri" else 0.5,
             )
         ]
-    if workflow_id == WORKFLOW_LOCAL:
-        mapped = "avglocion.cub" if method == "alie" else "userfunc.cub"
-        iso = 0.0005 if method == "alie" else 0.004 if method == "leae" else 0.01
-        return [(method.upper(), cubes["density.cub"], cubes[mapped], iso)]
+    if workflow_id == WORKFLOW_DEFORMATION:
+        requested_iso = float((options or {}).get("iso_value") or 0.05)
+        iso = requested_iso if 0.0001 <= requested_iso <= 1.0 else 0.05
+        return [("Deformation_Density", cubes["density.cub"], None, iso)]
     if workflow_id == WORKFLOW_EXCITED and method == "hole_electron":
         return [
             ("Hole_Electron", cubes["hole.cub"], cubes["electron.cub"], 0.002),
@@ -501,9 +505,6 @@ class ScientificWorkflowRunner:
             (WORKFLOW_WEAK, "iri"): ("BGR", -0.04, 0.02),
             (WORKFLOW_WEAK, "rdg"): ("BGR", -0.035, 0.02),
             (WORKFLOW_WEAK, "igmh"): ("BGR", -0.05, 0.05),
-            (WORKFLOW_LOCAL, "alie"): ("BWR", 0.32, 0.36),
-            (WORKFLOW_LOCAL, "lea"): ("BWR", -0.8, -0.3),
-            (WORKFLOW_LOCAL, "leae"): ("BWR", -0.03, 0.0),
         }
         scientific_range = mapped_ranges.get((self.workflow_id, self.method))
         if color_cube is not None and scientific_range is not None:
@@ -611,6 +612,16 @@ class ScientificWorkflowRunner:
             primary = self.inputs.get("wavefunction") or self.inputs.get("neutral")
             if primary is None:
                 raise ScientificWorkflowValidationError("缺少主波函数文件。")
+            if self.workflow_id == WORKFLOW_DEFORMATION:
+                atomwfn_source = self.multiwfn_exe.parent / "examples" / "atomwfn"
+                if not atomwfn_source.is_dir() or not any(atomwfn_source.glob("*.wfn")):
+                    raise ScientificWorkflowValidationError(
+                        "Multiwfn 目录中缺少 examples\\atomwfn，无法计算变形密度。"
+                    )
+                # Multiwfn looks for atomwfn in the calculation working folder.
+                # Copying its bundled spherical free-atom wavefunctions also
+                # prevents an unexpected attempt to invoke Gaussian.
+                shutil.copytree(atomwfn_source, work / "atomwfn")
             nto_file = work / f"NTO_state{max(1, int(self.options.get('excited_state') or 1))}.fch"
             sequence = build_multiwfn_sequence(
                 self.workflow_id,
@@ -634,7 +645,9 @@ class ScientificWorkflowRunner:
                         raise ScientificWorkflowError(f"Multiwfn 未生成预期文件：{name}")
                     cubes[name] = path
             self._emit(73, "正在用 VMD 与 Tachyon 生成图片")
-            render_pairs = _render_pairs(self.workflow_id, self.method, cubes)
+            render_pairs = _render_pairs(
+                self.workflow_id, self.method, cubes, self.options
+            )
             images: list[str] = []
             total = max(1, len(render_pairs))
             for index, (label, surface, color, iso) in enumerate(render_pairs, 1):

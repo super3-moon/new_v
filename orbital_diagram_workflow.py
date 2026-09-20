@@ -2183,6 +2183,8 @@ class OrbitalDiagramRunner:
             thread.start()
             started = time.monotonic()
             next_window_check = started
+            vmd_window_ready = not show_window
+            vmd_window_restore_attempted = False
             vmd_window_restored = False
             stream_finished = False
             reason = ""
@@ -2197,17 +2199,16 @@ class OrbitalDiagramRunner:
                     now = time.monotonic()
                     if (
                         show_window
+                        and vmd_window_ready
+                        and not vmd_window_restore_attempted
                         and not vmd_window_restored
                         and now >= next_window_check
-                        and now - started <= 20.0
                     ):
+                        vmd_window_restore_attempted = True
                         vmd_window_restored = self._restore_vmd_window(
                             process.pid,
                             excluded_handles=existing_vmd_windows,
                         )
-                        # Retry only until the display has been restored once.
-                        # Repositioning it again would override the user's drag.
-                        next_window_check = now + 0.7
                     try:
                         item = output_queue.get(timeout=0.1)
                     except queue.Empty:
@@ -2219,6 +2220,19 @@ class OrbitalDiagramRunner:
                         log.flush()
                         text = item.rstrip("\r\n")
                         if text:
+                            if (
+                                show_window
+                                and source.casefold() == "vmd"
+                                and "MolecularStudio: adjust the scene" in text
+                            ):
+                                # Wait until VMD has finished creating and
+                                # positioning its OpenGL scene.  Restoring it
+                                # earlier lets VMD move it off-screen again.
+                                # After the first successful restore this path
+                                # is never entered again, so user dragging stays
+                                # completely free.
+                                vmd_window_ready = True
+                                next_window_check = now + 0.2
                             self._emit(
                                 "output", index=job.index, job_id=job.id,
                                 wavefunction_path=str(job.pair.wavefunction_path),
@@ -2293,7 +2307,7 @@ class OrbitalDiagramRunner:
             excluded_handles=excluded_handles,
             width=INTERACTIVE_VMD_WINDOW[0],
             height=INTERACTIVE_VMD_WINDOW[1],
-            topmost=True,
+            topmost=False,
         )
 
 

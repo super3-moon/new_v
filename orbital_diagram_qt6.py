@@ -191,15 +191,7 @@ class OrbitalInputWorker(QObject):
                 raw_index - 1,
                 0,
             )
-            if path.is_dir():
-                try:
-                    for item in path.rglob("*"):
-                        self._check_cancelled()
-                        if _is_supported_file(item):
-                            result.append(item)
-                except OSError:
-                    continue
-            elif _is_supported_file(path):
+            if path.is_file() and _is_supported_file(path):
                 result.append(path)
 
         unique: list[Path] = []
@@ -328,6 +320,7 @@ class OrbitalInputTable(QTableWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 3, parent)
+        self.setObjectName("orbitalInputTable")
         self.setAcceptDrops(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -338,22 +331,33 @@ class OrbitalInputTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.setMinimumHeight(142)
+        self.setStyleSheet(
+            "QTableWidget#orbitalInputTable::item:selected {"
+            "background-color: #cfe2ff; color: #0b315b;"
+            "border-top: 1px solid #4a83d8; border-bottom: 1px solid #4a83d8;"
+            "}"
+        )
 
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
-        if any(url.isLocalFile() for url in urls):
+        if any(url.isLocalFile() and Path(url.toLocalFile()).is_file() for url in urls):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # type: ignore[override]
-        if event.mimeData().hasUrls():
+        urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+        if any(url.isLocalFile() and Path(url.toLocalFile()).is_file() for url in urls):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:  # type: ignore[override]
-        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
+        paths = [
+            Path(url.toLocalFile())
+            for url in event.mimeData().urls()
+            if url.isLocalFile() and Path(url.toLocalFile()).is_file()
+        ]
         if paths:
             self.pathsDropped.emit(paths)
             event.acceptProposedAction()
@@ -703,8 +707,6 @@ class OrbitalDiagramPage(QWidget):
         input_actions = QHBoxLayout()
         self.add_input_button = QPushButton("添加文件")
         self.add_input_button.clicked.connect(self._browse_files)
-        self.add_folder_button = QPushButton("扫描文件夹")
-        self.add_folder_button.clicked.connect(self._browse_folder)
         self.manual_pair_button = QPushButton("配对选中的两个文件")
         self.manual_pair_button.clicked.connect(self._manual_pair_selected)
         self.remove_input_button = QPushButton("移除选中")
@@ -712,7 +714,6 @@ class OrbitalDiagramPage(QWidget):
         self.clear_input_button = QPushButton("清空")
         self.clear_input_button.clicked.connect(self._clear_files)
         input_actions.addWidget(self.add_input_button)
-        input_actions.addWidget(self.add_folder_button)
         input_actions.addWidget(self.manual_pair_button)
         input_actions.addWidget(self.remove_input_button)
         input_actions.addWidget(self.clear_input_button)
@@ -1155,11 +1156,6 @@ class OrbitalDiagramPage(QWidget):
         if files:
             self._add_paths([Path(item) for item in files])
 
-    def _browse_folder(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "扫描轨道计算文件夹", "")
-        if directory:
-            self._add_paths([Path(directory)])
-
     @Slot(object)
     def _add_paths(self, paths: object) -> None:
         if self.is_input_processing():
@@ -1291,7 +1287,6 @@ class OrbitalDiagramPage(QWidget):
         self._input_busy = bool(busy)
         for widget in (
             self.add_input_button,
-            self.add_folder_button,
             self.manual_pair_button,
             self.remove_input_button,
             self.clear_input_button,

@@ -30,7 +30,7 @@ WORKFLOW_WEAK_INTERACTION = "weak_interaction"
 WORKFLOW_FUKUI_DESCRIPTOR = "fukui_descriptor"
 WORKFLOW_EXCITED_STATE = "excited_state_density"
 WORKFLOW_SPIN_DENSITY = "spin_density"
-WORKFLOW_LOCAL_REACTIVITY = "local_reactivity_surface"
+WORKFLOW_DEFORMATION_DENSITY = "density_difference_deformation"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -156,9 +156,9 @@ def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
             handler="scientific_workflow",
         ),
         WorkflowDefinition(
-            id=WORKFLOW_LOCAL_REACTIVITY,
-            name="局域反应性表面",
-            description="生成 ALIE、LEA 或 LEAE 数据并映射到电子密度表面。",
+            id=WORKFLOW_DEFORMATION_DENSITY,
+            name="电子密度差／变形密度",
+            description="计算分子电子密度与自由原子叠加密度之差，并绘制电子积累与耗散区域。",
             engine="Multiwfn + VMD",
             input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
             handler="scientific_workflow",

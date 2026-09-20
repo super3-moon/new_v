@@ -1000,6 +1000,17 @@ def _parse_molden(path: Path) -> OrbitalDataset:
         if alpha_count is not None and beta_count is not None
         else None
     )
+    charge: int | None = None
+    if alpha_count is not None and beta_count is not None:
+        inferred_charge = sum(atom.atomic_number for atom in atoms) - (
+            alpha_count + beta_count
+        )
+        # Standard all-electron Molden files contain enough information to
+        # recover the molecular charge exactly.  Large apparent charges are a
+        # strong indication that an ECP removed core electrons; retain None in
+        # that case instead of reporting a false mismatch.
+        if -8 <= inferred_charge <= 8:
+            charge = int(inferred_charge)
     warnings: list[str] = []
     if "orca" not in title.casefold():
         warnings.append("Molden 标题未明确标识 ORCA；请通过配对输出进一步核验来源。")
@@ -1018,7 +1029,7 @@ def _parse_molden(path: Path) -> OrbitalDataset:
         atoms=tuple(atoms),
         alpha_electrons=alpha_count,
         beta_electrons=beta_count,
-        charge=None,
+        charge=charge,
         multiplicity=multiplicity,
         title=title,
         orbital_set_kind="special" if special else "canonical",
