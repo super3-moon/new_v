@@ -212,7 +212,9 @@ class ScientificWorkflowPage(QWidget):
         self.iso_label = settings_form.labelForField(self.iso_spin)
         settings_layout.addLayout(settings_form)
 
-        style_row = QHBoxLayout()
+        self.style_row_widget = QWidget()
+        style_row = QHBoxLayout(self.style_row_widget)
+        style_row.setContentsMargins(0, 0, 0, 0)
         style_row.addWidget(QLabel("绘图方案"))
         self.style_label = QLabel("尚未选择")
         self.style_label.setObjectName("detailLabel")
@@ -221,7 +223,12 @@ class ScientificWorkflowPage(QWidget):
         choose_style = QPushButton("选择绘图方案")
         choose_style.clicked.connect(self._choose_style)
         style_row.addWidget(choose_style)
-        settings_layout.addLayout(style_row)
+        settings_layout.addWidget(self.style_row_widget)
+
+        self.weak_display_label = QLabel()
+        self.weak_display_label.setObjectName("detailLabel")
+        self.weak_display_label.setWordWrap(True)
+        settings_layout.addWidget(self.weak_display_label)
 
         output_row = QHBoxLayout()
         self.output_edit = QLineEdit(str(self.storage_dir / "automatic_runs"))
@@ -301,8 +308,12 @@ class ScientificWorkflowPage(QWidget):
             label_widget = QLabel(label)
             self.input_form.addRow(label_widget, row)
             self.role_rows[role] = (label_widget, editor, button)
-        if str(self.style_snapshot.get("style", {}).get("surface_mode") or "") != self.spec.surface_mode:
+        if self.spec.id == science.WORKFLOW_WEAK:
+            self.style_snapshot = {}
+        elif str(self.style_snapshot.get("style", {}).get("surface_mode") or "") != self.spec.surface_mode:
             self.style_snapshot = self._default_style_snapshot()
+        self.style_row_widget.setVisible(self.spec.id != science.WORKFLOW_WEAK)
+        self.weak_display_label.setVisible(self.spec.id == science.WORKFLOW_WEAK)
         self._sync_style_label()
         self._sync_method_options()
         self.progress.setValue(0)
@@ -310,6 +321,8 @@ class ScientificWorkflowPage(QWidget):
         self.ready_badge.setText("等待配置")
 
     def _default_style_snapshot(self) -> dict:
+        if self.spec.id == science.WORKFLOW_WEAK:
+            return {}
         styles = [
             copy.deepcopy(item)
             for item in core.get_all_bundle_styles()
@@ -346,6 +359,8 @@ class ScientificWorkflowPage(QWidget):
         self.iso_spin.setVisible(show_iso)
         self.iso_label.setVisible(show_iso)
         notes = {
+            "iri": "生成 IRI 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
+            "rdg": "生成 RDG 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
             "igmh": "片段使用 Multiwfn 原子选择语法，并用分号分开。程序不会静默修改全局 settings.ini。",
             "strict": "三个体系必须具有相同几何、基组与理论水平；输入顺序会按 N、N+1、N-1 传给 Multiwfn。",
             "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
@@ -357,6 +372,15 @@ class ScientificWorkflowPage(QWidget):
             ),
         }
         self.method_note.setText(notes.get(method, self.spec.description))
+        if self.spec.id == science.WORKFLOW_WEAK:
+            profile = science.weak_interaction_display_profile(method)
+            self.weak_display_label.setText(
+                "弱相互作用显示参数（来自 Multiwfn 自带脚本）\n"
+                f"{profile['surface_field']} 等值面 = {profile['iso_value']:g}；"
+                f"以 {profile['color_field']} 着色；BGR 范围 "
+                f"{profile['color_min']:g} ～ {profile['color_max']:g}。"
+                "这些只是正确的科学默认值，VMD 打开后仍可自由修改。"
+            )
 
     def _browse_input(self, role: str) -> None:
         role_info = next((item for item in self.spec.input_roles if item[0] == role), None)

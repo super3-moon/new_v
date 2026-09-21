@@ -1576,6 +1576,8 @@ def _restore_global_scene_tcl(
     width: int,
     height: int,
     restore_exact_color_slots: bool = False,
+    restore_color_slots: bool = True,
+    restore_color_scale_window: bool = True,
 ) -> list[str]:
     """Replay normalized global scene data omitted by VMD 1.9.3 save_state."""
 
@@ -1587,7 +1589,7 @@ def _restore_global_scene_tcl(
         )
         for color in state.colors
     ]
-    if not restore_exact_color_slots:
+    if restore_color_slots and not restore_exact_color_slots:
         lines.extend(color_lines)
     for entry in state.color_categories:
         lines.extend(
@@ -1614,11 +1616,16 @@ def _restore_global_scene_tcl(
             "color scale min 0",
             "color scale max 1",
             f"color scale midpoint {_format_number(state.color_scale_midpoint)}",
-            f"color scale min {_format_number(state.color_scale_min)}",
-            f"color scale max {_format_number(state.color_scale_max)}",
         ]
     )
-    if restore_exact_color_slots:
+    if restore_color_scale_window:
+        lines.extend(
+            [
+                f"color scale min {_format_number(state.color_scale_min)}",
+                f"color scale max {_format_number(state.color_scale_max)}",
+            ]
+        )
+    if restore_color_slots and restore_exact_color_slots:
         # VMD 1.9.3 has no native Turbo method.  The ESP workflow therefore
         # captures its 1024 generated color slots.  Defining a scale method
         # recalculates those slots, so restore the confirmed RGB table last.
@@ -1717,12 +1724,16 @@ def _restore_native_state_tcl(
     native_state_path: Path | str,
     reference_cube_path: Path | str,
     restore_exact_color_slots: bool = False,
+    restore_color_slots: bool = True,
+    restore_color_scale_window: bool = True,
 ) -> list[str]:
     global_lines = _restore_global_scene_tcl(
         state,
         width=width,
         height=height,
         restore_exact_color_slots=restore_exact_color_slots,
+        restore_color_slots=restore_color_slots,
+        restore_color_scale_window=restore_color_scale_window,
     )
     if global_lines:
         # VMD's -e script runner echoes every top-level command result.  Scene
@@ -1956,6 +1967,8 @@ def build_batch_render_tcl(
     native_state_path: Path | str | None = None,
     reference_cube_path: Path | str | None = None,
     restore_exact_color_slots: bool = False,
+    restore_color_slots: bool = True,
+    restore_color_scale_window: bool = True,
 ) -> str:
     """Build a headless VMD Tcl script that replays a confirmed scene.
 
@@ -2000,6 +2013,8 @@ def build_batch_render_tcl(
             native_state_path=native_state_path,
             reference_cube_path=reference_cube_path,
             restore_exact_color_slots=restore_exact_color_slots,
+            restore_color_slots=restore_color_slots,
+            restore_color_scale_window=restore_color_scale_window,
         )
     else:
         restore_lines = _restore_state_tcl(

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import copy
 import json
+import locale
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -26,6 +28,7 @@ from typing import Callable, Mapping
 from PIL import Image
 
 import orbital_data
+import orbital_vmd
 import vmd_style_tool as vmd_core
 
 
@@ -75,7 +78,7 @@ _SPECS = (
         "统一生成 IRI、RDG/NCI 或 IGMH 网格，并按推荐的指标等值面着色。",
         (("iri", "IRI"), ("rdg", "RDG / NCI"), ("igmh", "IGMH（片段间）")),
         (("wavefunction", "波函数文件", WAVEFUNCTION_EXTENSIONS),),
-        "volume_mapped",
+        "weak_interaction",
         "IRI · RDG/NCI · IGMH · VMD",
     ),
     ScientificWorkflowSpec(
@@ -137,6 +140,112 @@ def workflow_spec(workflow_id: str) -> ScientificWorkflowSpec:
         if spec.id == workflow_id:
             return spec
     raise ScientificWorkflowValidationError(f"未知的自动化流程：{workflow_id}")
+
+
+_WEAK_DISPLAY_PROFILES: dict[str, dict[str, object]] = {
+    # Multiwfn 2026.7.11 examples/IRIfill.vmd
+    "iri": {
+        "name": "Multiwfn IRI 推荐显示",
+        "surface_field": "IRI",
+        "color_field": "sign(λ₂)ρ",
+        "iso_value": 1.0,
+        "color_min": -0.04,
+        "color_max": 0.02,
+        "color_midpoint": 0.666,
+        "skeleton_scale": 0.7,
+    },
+    # Multiwfn 2026.7.11 examples/RDGfill2.vmd explicitly identifies this
+    # scale as the more reasonable variant of RDGfill.vmd.
+    "rdg": {
+        "name": "Multiwfn RDG/NCI 推荐显示",
+        "surface_field": "RDG",
+        "color_field": "sign(λ₂)ρ",
+        "iso_value": 0.5,
+        "color_min": -0.04,
+        "color_max": 0.02,
+        "color_midpoint": 0.666,
+        "skeleton_scale": 1.0,
+    },
+    # Multiwfn 2026.7.11 examples/IGM_inter.vmd
+    "igmh": {
+        "name": "Multiwfn IGMH 片段间推荐显示",
+        "surface_field": "δginter",
+        "color_field": "sign(λ₂)ρ",
+        "iso_value": 0.01,
+        "color_min": -0.05,
+        "color_max": 0.05,
+        "color_midpoint": 0.5,
+        "skeleton_scale": 1.0,
+    },
+}
+
+
+def weak_interaction_display_profile(method: str) -> dict[str, object]:
+    """Return the method-specific display parameters bundled with Multiwfn."""
+    try:
+        return copy.deepcopy(_WEAK_DISPLAY_PROFILES[str(method)])
+    except KeyError as exc:
+        raise ScientificWorkflowValidationError("未知的弱相互作用显示方法。") from exc
+
+
+def _tcl_utf8_path(path: Path | str) -> str:
+    encoded = str(Path(path).expanduser().resolve()).encode("utf-8").hex()
+    return f"[encoding convertfrom utf-8 [binary format H* {encoded}]]"
+
+
+def build_weak_interaction_scene_tcl(
+    method: str,
+    surface_cube: Path | str,
+    color_cube: Path | str,
+) -> str:
+    """Build the initial VMD scene from Multiwfn's method-specific scripts.
+
+    The first Cube is the sign(lambda2)rho color field and the second supplies
+    the IRI, RDG or delta-g_inter isosurface. This deliberately does not pass
+    through the generic ESP/style-library renderer.
+    """
+    profile = weak_interaction_display_profile(method)
+    surface = Path(surface_cube).expanduser().resolve()
+    color = Path(color_cube).expanduser().resolve()
+    if not surface.is_file() or not color.is_file():
+        raise ScientificWorkflowValidationError("弱相互作用绘图所需的 Cube 文件不完整。")
+    iso = float(profile["iso_value"])
+    minimum = float(profile["color_min"])
+    maximum = float(profile["color_max"])
+    midpoint = float(profile["color_midpoint"])
+    skeleton = float(profile["skeleton_scale"])
+    lines = [
+        f"set MO_COLOR_CUBE {_tcl_utf8_path(color)}",
+        f"set MO_SURFACE_CUBE {_tcl_utf8_path(surface)}",
+        "if {![file isfile $MO_COLOR_CUBE]} { error \"Weak-interaction color Cube is missing\" }",
+        "if {![file isfile $MO_SURFACE_CUBE]} { error \"Weak-interaction surface Cube is missing\" }",
+        "mol new $MO_COLOR_CUBE type cube waitfor all",
+        "mol addfile $MO_SURFACE_CUBE type cube waitfor all",
+        "set MO_MOL [molinfo top]",
+        "mol delrep 0 $MO_MOL",
+        f"mol representation CPK {skeleton:.6f} 0.300000 18.000000 16.000000",
+        "mol color Element",
+        "mol material Opaque",
+        "mol addrep $MO_MOL",
+        f"mol representation Isosurface {iso:.8g} 1 0 0 1 1",
+        "mol color Volume 0",
+        "mol material Opaque",
+        "mol addrep $MO_MOL",
+        f"mol scaleminmax $MO_MOL 1 {minimum:.8g} {maximum:.8g}",
+        "color scale method BGR",
+        f"color scale midpoint {midpoint:.8g}",
+        "color Display Background white",
+        "axes location Off",
+        "display depthcue off",
+        "display rendermode GLSL",
+        "light 3 on",
+    ]
+    if method == "iri":
+        lines.extend(["color Element N iceblue", "mol modcolor 0 $MO_MOL Element"])
+    if method == "igmh":
+        lines.append("material change specular Opaque 0.300000")
+    lines.extend(["display resetview", "display update ui"])
+    return "\n".join(lines) + "\n"
 
 
 def _clean_part(value: str, fallback: str = "result") -> str:
@@ -346,12 +455,20 @@ class ScientificWorkflowRunner:
         if not self.vmd_exe.is_file():
             raise ScientificWorkflowValidationError("vmd.exe 路径无效。")
         snapshot = self.options.get("style_snapshot")
-        if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("style"), Mapping):
-            raise ScientificWorkflowValidationError("请选择兼容的绘图方案。")
-        style = dict(snapshot["style"])
-        if str(style.get("surface_mode") or "signed") != self.spec.surface_mode:
-            raise ScientificWorkflowValidationError("绘图方案与当前科学数据类型不兼容。")
-        self.style_snapshot = copy.deepcopy(dict(snapshot))
+        if self.workflow_id == WORKFLOW_WEAK:
+            # Weak-interaction maps use method-specific scientific fields and
+            # parameters from Multiwfn's bundled VMD scripts. They are not an
+            # ESP-style surface and therefore deliberately bypass the shared
+            # drawing-style library.
+            weak_interaction_display_profile(self.method)
+            self.style_snapshot = {}
+        else:
+            if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("style"), Mapping):
+                raise ScientificWorkflowValidationError("请选择兼容的绘图方案。")
+            style = dict(snapshot["style"])
+            if str(style.get("surface_mode") or "signed") != self.spec.surface_mode:
+                raise ScientificWorkflowValidationError("绘图方案与当前科学数据类型不兼容。")
+            self.style_snapshot = copy.deepcopy(dict(snapshot))
         self.event_callback = event_callback
         self._cancelled = threading.Event()
         self._process: subprocess.Popen | None = None
@@ -494,24 +611,212 @@ class ScientificWorkflowRunner:
             cubes[f"NTO_{number:02d}_{side}.cub"] = path
         return cubes
 
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen) -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+
+    def _capture_weak_interaction_view(
+        self,
+        surface_cube: Path,
+        color_cube: Path,
+        work: Path,
+        log_dir: Path,
+    ) -> tuple[orbital_vmd.VmdViewState, Path]:
+        """Open the exact Multiwfn weak-interaction scene for free editing."""
+        protocol = work / "weak_interaction_view.capture"
+        native_state = work / "weak_interaction_final_state.vmd"
+        cancel_marker = orbital_vmd.capture_cancel_marker_path(protocol)
+        error_log = orbital_vmd.capture_error_log_path(protocol)
+        for path in (protocol, native_state, cancel_marker, error_log):
+            path.unlink(missing_ok=True)
+        initial_scene = build_weak_interaction_scene_tcl(
+            self.method, surface_cube, color_cube
+        )
+        capture_script = orbital_vmd.build_interactive_capture_tcl(
+            color_cube,
+            protocol,
+            {},
+            width=1160,
+            height=640,
+            debug_state_path=native_state,
+            initial_scene_tcl=initial_scene,
+        )
+        script_path = work / "adjust_weak_interaction_view.vmd"
+        _write_text(script_path, capture_script)
+        log_path = log_dir / "vmd_adjust_view.log"
+        self._emit(
+            76,
+            "VMD 已打开：可自由调整弱相互作用等值面、角度与显示效果，确认后再渲染",
+        )
+
+        existing_windows = orbital_vmd.vmd_display_window_handles()
+        encoding = locale.getpreferredencoding(False) or "utf-8"
+        process = subprocess.Popen(
+            [str(self.vmd_exe), "-e", str(script_path)],
+            cwd=str(work),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding=encoding,
+            errors="replace",
+        )
+        self._process = process
+        assert process.stdout is not None
+        output_queue: queue.Queue[object] = queue.Queue()
+        sentinel = object()
+
+        def read_output() -> None:
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    output_queue.put(line)
+            finally:
+                output_queue.put(sentinel)
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+        started = time.monotonic()
+        timeout = max(60, int(self.options.get("vmd_timeout_seconds") or 3600))
+        ready_at: float | None = None
+        next_window_check = started
+        window_restored = False
+        stream_finished = False
+        reason = ""
+        try:
+            with log_path.open("w", encoding="utf-8", errors="replace") as log:
+                while process.poll() is None or not stream_finished:
+                    now = time.monotonic()
+                    if (
+                        ready_at is not None
+                        and not window_restored
+                        and now >= next_window_check
+                        and now - ready_at <= 20.0
+                    ):
+                        # Retry only until the newly created window is found.
+                        # Once restored successfully it is never repositioned,
+                        # so the user remains free to move or resize it.
+                        window_restored = orbital_vmd.restore_vmd_display_window(
+                            process.pid,
+                            excluded_handles=existing_windows,
+                            width=1180,
+                            height=700,
+                            topmost=False,
+                        )
+                        next_window_check = now + 0.7
+                    try:
+                        item = output_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        item = None
+                    if item is sentinel:
+                        stream_finished = True
+                    elif isinstance(item, str):
+                        log.write(item)
+                        log.flush()
+                        if "MolecularStudio: adjust the scene" in item:
+                            ready_at = now
+                            next_window_check = now
+                    if self._cancelled.is_set() and process.poll() is None:
+                        reason = "cancelled"
+                        self._terminate_process(process)
+                    elif not reason and protocol.is_file():
+                        reason = "confirmed"
+                        if process.poll() is None:
+                            self._terminate_process(process)
+                    elif not reason and cancel_marker.is_file():
+                        reason = "cancelled"
+                        if process.poll() is None:
+                            self._terminate_process(process)
+                    elif not reason and now - started > timeout:
+                        reason = "timeout"
+                        if process.poll() is None:
+                            self._terminate_process(process)
+                reader.join(timeout=1.0)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+            self._process = None
+
+        if reason == "cancelled":
+            raise ScientificWorkflowError("VMD 调整已取消。")
+        if reason == "timeout":
+            raise ScientificWorkflowError("等待 VMD 调整确认超时，Cube 已保留。")
+        if not protocol.is_file():
+            detail = f"请查看 {error_log.name}。" if error_log.is_file() else ""
+            raise ScientificWorkflowError(f"没有取得已确认的 VMD 显示参数。{detail}")
+        if not native_state.is_file():
+            raise ScientificWorkflowError("VMD 未保存完整场景，无法保证最终图片与调整结果一致。")
+        state = orbital_vmd.load_view_state(
+            protocol,
+            expected_geometry_fingerprint=orbital_vmd.cube_geometry_fingerprint(
+                color_cube
+            ),
+        )
+        state.save_json(work / "weak_interaction_viewpoint.json")
+        self._emit(86, "VMD 参数已确认，正在使用 Tachyon 渲染")
+        return state, native_state
+
+    def _render_weak_interaction(
+        self,
+        label: str,
+        surface_cube: Path,
+        color_cube: Path,
+        work: Path,
+        root: Path,
+        log_dir: Path,
+    ) -> Path:
+        state, native_state = self._capture_weak_interaction_view(
+            surface_cube, color_cube, work, log_dir
+        )
+        scene_output = work / f"{_clean_part(label)}_render.dat"
+        render_script = orbital_vmd.build_batch_render_tcl(
+            color_cube,
+            scene_output,
+            state,
+            width=max(640, int(self.options.get("width") or 1400)),
+            height=max(480, int(self.options.get("height") or 1050)),
+            renderer="Tachyon",
+            native_state_path=native_state,
+            reference_cube_path=color_cube,
+            # VMD 1.9.3 reports a stale global color-scale window and RGB-slot
+            # table for these volume-colored isosurfaces. The visible palette
+            # and per-representation range are already authoritative in the
+            # native save_state; replaying the stale normalized values would
+            # turn green interaction zones red after confirmation.
+            restore_exact_color_slots=False,
+            restore_color_slots=False,
+            restore_color_scale_window=False,
+        )
+        script_path = work / "render_weak_interaction.vmd"
+        _write_text(script_path, render_script)
+        self._run_process(
+            [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(script_path)],
+            cwd=work,
+            stdin_text=None,
+            log_path=log_dir / f"vmd_{_clean_part(label)}.log",
+            timeout=max(60, int(self.options.get("vmd_timeout_seconds") or 900)),
+            base_progress=87,
+            progress_span=8,
+        )
+        raw = Path(str(scene_output) + ".bmp")
+        if not raw.is_file() or raw.stat().st_size <= 64:
+            raise ScientificWorkflowError(f"VMD 未生成 {label} 的 Tachyon 渲染文件。")
+        png = _unique_path(root / f"{_clean_part(label)}.png")
+        with Image.open(raw) as image:
+            image.convert("RGB").save(png, format="PNG", optimize=True)
+        return png
+
     def _render(self, label: str, surface_cube: Path, color_cube: Path | None, iso: float, work: Path, root: Path, log_dir: Path) -> Path:
         style = copy.deepcopy(dict(self.style_snapshot["style"]))
         rep0 = list(self.style_snapshot.get("rep0_commands") or [])
         style["default_iso_value"] = float(iso)
-        # These ranges define the scientific mapping, not the cosmetic style.
-        # They follow Multiwfn's bundled VMD examples; the selected scheme is
-        # still authoritative for skeleton, material, lighting and geometry.
-        mapped_ranges = {
-            (WORKFLOW_WEAK, "iri"): ("BGR", -0.04, 0.02),
-            (WORKFLOW_WEAK, "rdg"): ("BGR", -0.035, 0.02),
-            (WORKFLOW_WEAK, "igmh"): ("BGR", -0.05, 0.05),
-        }
-        scientific_range = mapped_ranges.get((self.workflow_id, self.method))
-        if color_cube is not None and scientific_range is not None:
-            method, minimum, maximum = scientific_range
-            style["color_scale_method"] = method
-            style["color_scale_min"] = minimum
-            style["color_scale_max"] = maximum
         script = vmd_core.build_vmd_tcl(style, rep0)
         if color_cube is not None and self.spec.surface_mode == "signed":
             secondary = color_cube.resolve().as_posix()
@@ -653,8 +958,20 @@ class ScientificWorkflowRunner:
             for index, (label, surface, color, iso) in enumerate(render_pairs, 1):
                 if self._cancelled.is_set():
                     raise ScientificWorkflowError("任务已取消。")
-                self._emit(73 + 20 * (index - 1) / total, f"正在渲染 {label}")
-                images.append(str(self._render(label, surface, color, iso, work, run_dir, log_dir)))
+                if self.workflow_id == WORKFLOW_WEAK:
+                    if color is None:
+                        raise ScientificWorkflowError("弱相互作用着色场缺失。")
+                    self._emit(74, "正在准备 Multiwfn 弱相互作用显示场景")
+                    images.append(
+                        str(
+                            self._render_weak_interaction(
+                                label, surface, color, work, run_dir, log_dir
+                            )
+                        )
+                    )
+                else:
+                    self._emit(73 + 20 * (index - 1) / total, f"正在渲染 {label}")
+                    images.append(str(self._render(label, surface, color, iso, work, run_dir, log_dir)))
             keep_cubes = bool(self.options.get("keep_cubes", True))
             collected: list[str] = []
             if keep_cubes:
