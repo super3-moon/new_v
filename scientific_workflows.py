@@ -1,6 +1,6 @@
 """Shared execution core for the additional Multiwfn + VMD workflows.
 
-The five user-facing workflow families are intentionally data-driven.  They
+The four user-facing workflow families are intentionally data-driven.  They
 share one process runner, one result layout, one VMD renderer and one progress
 event contract; only the documented Multiwfn menu sequence and expected
 scientific products differ.
@@ -33,7 +33,6 @@ import vmd_style_tool as vmd_core
 
 
 WORKFLOW_WEAK = "weak_interaction"
-WORKFLOW_FUKUI = "fukui_descriptor"
 WORKFLOW_EXCITED = "excited_state_density"
 WORKFLOW_SPIN = "spin_density"
 WORKFLOW_DEFORMATION = "density_difference_deformation"
@@ -82,20 +81,6 @@ _SPECS = (
         "IRI · RDG/NCI · IGMH · VMD",
     ),
     ScientificWorkflowSpec(
-        WORKFLOW_FUKUI,
-        "Fukui 与双描述符",
-        "CDFT",
-        "使用同一几何和计算水平的 N、N+1、N-1 波函数生成严格 CDFT 网格。",
-        (("strict", "严格有限差分 CDFT"),),
-        (
-            ("neutral", "中性体系 N", WAVEFUNCTION_EXTENSIONS),
-            ("cation", "N-1 体系", WAVEFUNCTION_EXTENSIONS),
-            ("anion", "N+1 体系", WAVEFUNCTION_EXTENSIONS),
-        ),
-        "signed",
-        "f+ · f− · f0 · 双描述符",
-    ),
-    ScientificWorkflowSpec(
         WORKFLOW_EXCITED,
         "激发态空穴-电子与 NTO",
         "EX",
@@ -122,11 +107,14 @@ _SPECS = (
         WORKFLOW_DEFORMATION,
         "电子密度差／变形密度",
         "Δρ",
-        "计算分子电子密度与同一几何下自由原子叠加密度之差，并绘制电子积累与耗散区域。",
-        (("deformation", "变形密度（分子密度 − 自由原子密度）"),),
-        (("wavefunction", "分子波函数文件", WAVEFUNCTION_EXTENSIONS),),
+        "既可计算分子与自由原子叠加密度之差，也可由目标体系减去一个或多个参考体系。",
+        (
+            ("deformation", "分子变形密度（分子 − 自由原子叠加）"),
+            ("fragment_difference", "多文件电子密度差（目标体系 − 参考体系）"),
+        ),
+        (("wavefunction", "目标体系波函数", WAVEFUNCTION_EXTENSIONS),),
         "signed",
-        "变形密度 · 电子积累/耗散 · VMD",
+        "变形密度 · 多文件密度差 · 电子积累/耗散 · VMD",
     ),
 )
 
@@ -287,6 +275,94 @@ def _path_for_role(
     return path
 
 
+def _density_difference_reference_paths(
+    raw: object,
+    *,
+    primary: Path | None = None,
+    require_files: bool = True,
+) -> tuple[Path, ...]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise ScientificWorkflowValidationError("多文件电子密度差至少需要一个参考体系波函数。")
+    references: list[Path] = []
+    seen: set[str] = set()
+    primary_key = os.path.normcase(str(primary)) if primary is not None else ""
+    for value in raw:
+        path = Path(str(value or "")).expanduser().resolve()
+        key = os.path.normcase(str(path))
+        if key == primary_key:
+            raise ScientificWorkflowValidationError("目标体系不能同时作为减去的参考体系。")
+        if key in seen:
+            continue
+        if "," in str(path):
+            raise ScientificWorkflowValidationError(
+                f"Multiwfn 自定义运算不支持路径中包含逗号：{path.name}"
+            )
+        if require_files and not path.is_file():
+            raise ScientificWorkflowValidationError(f"参考体系文件不存在：{path}")
+        name = path.name.casefold()
+        if not any(name.endswith(ext) for ext in WAVEFUNCTION_EXTENSIONS):
+            raise ScientificWorkflowValidationError(f"不支持的参考体系格式：{path.name}")
+        seen.add(key)
+        references.append(path)
+    if not references:
+        raise ScientificWorkflowValidationError("多文件电子密度差至少需要一个参考体系波函数。")
+    return tuple(references)
+
+
+def _validate_density_difference_coordinate_frame(
+    primary: Path, references: tuple[Path, ...]
+) -> None:
+    """Reject supported files whose atoms are not in the target coordinate frame.
+
+    Multiwfn evaluates every reference wavefunction on the first file's grid;
+    a fragment that Gaussian rotated to its standard orientation therefore
+    produces a numerically valid but scientifically meaningless difference.
+    FCH and Molden inputs expose enough geometry for a safe subset check. Other
+    Multiwfn formats remain supported and are accompanied by an explicit UI
+    warning because this application does not reinterpret their coordinates.
+    """
+
+    def parsed_atoms(path: Path):
+        folded = path.name.casefold()
+        if not folded.endswith((".fch", ".fchk", ".molden", ".molden.input")):
+            return None
+        try:
+            return orbital_data.parse_wavefunction_file(path).atoms
+        except orbital_data.OrbitalDataError as exc:
+            raise ScientificWorkflowValidationError(
+                f"无法核验波函数坐标：{path.name}（{exc}）"
+            ) from exc
+
+    target_atoms = parsed_atoms(primary)
+    if not target_atoms:
+        return
+    tolerance_squared = 0.01**2
+    for reference in references:
+        atoms = parsed_atoms(reference)
+        if not atoms:
+            continue
+        available = set(range(len(target_atoms)))
+        for atom in atoms:
+            match = next(
+                (
+                    index
+                    for index in available
+                    if target_atoms[index].atomic_number == atom.atomic_number
+                    and (target_atoms[index].x - atom.x) ** 2
+                    + (target_atoms[index].y - atom.y) ** 2
+                    + (target_atoms[index].z - atom.z) ** 2
+                    <= tolerance_squared
+                ),
+                None,
+            )
+            if match is None:
+                raise ScientificWorkflowValidationError(
+                    f"{reference.name} 与目标体系不在同一坐标系。请在目标体系几何上计算参考体系，"
+                    "并关闭会旋转坐标的标准取向。"
+                )
+            available.remove(match)
+
+
 def build_multiwfn_sequence(
     workflow_id: str,
     method: str,
@@ -316,26 +392,6 @@ def build_multiwfn_sequence(
                 ["20", "11", str(len(fragments)), *fragments, str(grid), "3", "0", "0", "q", ""]
             )
         raise ScientificWorkflowValidationError("未知的弱相互作用方法。")
-
-    if workflow_id == WORKFLOW_FUKUI:
-        return "\n".join(
-            [
-                "22",
-                "3",
-                str(inputs["neutral"]),
-                str(inputs["anion"]),
-                str(inputs["cation"]),
-                str(grid),
-                "5",
-                "6",
-                "7",
-                "8",
-                "0",
-                "0",
-                "q",
-                "",
-            ]
-        )
 
     if workflow_id == WORKFLOW_EXCITED:
         state = max(1, int(options.get("excited_state") or 1))
@@ -372,11 +428,35 @@ def build_multiwfn_sequence(
         return f"5\n5\n{grid}\n2\n0\nq\n"
 
     if workflow_id == WORKFLOW_DEFORMATION:
-        if method != "deformation":
-            raise ScientificWorkflowValidationError("未知的电子密度差方法。")
-        # Multiwfn manual 3.7.2 / tutorial 4.2.8: main function 5,
-        # deformation property (-2), electron density (1), export Cube (2).
-        return f"5\n-2\n1\n{grid}\n2\n0\nq\n"
+        if method == "deformation":
+            # Multiwfn manual 3.7.2 / tutorial 4.2.8: main function 5,
+            # deformation property (-2), electron density (1), export Cube (2).
+            return f"5\n-2\n1\n{grid}\n2\n0\nq\n"
+        if method == "fragment_difference":
+            # Multiwfn manual 3.7.1 and tutorial 4.5.5: custom operation
+            # starts from the initially loaded target wavefunction, then
+            # subtracts each reference density on the target's common grid.
+            references = _density_difference_reference_paths(
+                options.get("reference_files"),
+                primary=inputs.get("wavefunction"),
+                require_files=False,
+            )
+            operations = [f"-,{path}" for path in references]
+            return "\n".join(
+                [
+                    "5",
+                    "0",
+                    str(len(references)),
+                    *operations,
+                    "1",
+                    str(grid),
+                    "2",
+                    "0",
+                    "q",
+                    "",
+                ]
+            )
+        raise ScientificWorkflowValidationError("未知的电子密度差方法。")
 
     raise ScientificWorkflowValidationError(f"未知的自动化流程：{workflow_id}")
 
@@ -384,8 +464,6 @@ def build_multiwfn_sequence(
 def _expected_products(workflow_id: str, method: str) -> tuple[str, ...]:
     if workflow_id == WORKFLOW_WEAK:
         return ("sl2r.cub", "dg_inter.cub", "dg_intra.cub", "dg.cub") if method == "igmh" else ("func1.cub", "func2.cub")
-    if workflow_id == WORKFLOW_FUKUI:
-        return ("f+.cub", "f-.cub", "f0.cub", "DD.cub")
     if workflow_id == WORKFLOW_EXCITED and method == "hole_electron":
         return ("hole.cub", "electron.cub", "CDD.cub")
     if workflow_id == WORKFLOW_SPIN:
@@ -413,9 +491,11 @@ def _render_pairs(
             )
         ]
     if workflow_id == WORKFLOW_DEFORMATION:
-        requested_iso = float((options or {}).get("iso_value") or 0.05)
-        iso = requested_iso if 0.0001 <= requested_iso <= 1.0 else 0.05
-        return [("Deformation_Density", cubes["density.cub"], None, iso)]
+        default_iso = 0.0012 if method == "fragment_difference" else 0.05
+        requested_iso = float((options or {}).get("iso_value") or default_iso)
+        iso = requested_iso if 0.00001 <= requested_iso <= 1.0 else default_iso
+        label = "Electron_Density_Difference" if method == "fragment_difference" else "Deformation_Density"
+        return [(label, cubes["density.cub"], None, iso)]
     if workflow_id == WORKFLOW_EXCITED and method == "hole_electron":
         return [
             ("Hole_Electron", cubes["hole.cub"], cubes["electron.cub"], 0.002),
@@ -447,6 +527,16 @@ class ScientificWorkflowRunner:
             for role, _label, extensions in self.spec.input_roles
         }
         self.options = copy.deepcopy(dict(options))
+        self.reference_files: tuple[Path, ...] = ()
+        if self.workflow_id == WORKFLOW_DEFORMATION and self.method == "fragment_difference":
+            self.reference_files = _density_difference_reference_paths(
+                self.options.get("reference_files"),
+                primary=self.inputs.get("wavefunction"),
+            )
+            _validate_density_difference_coordinate_frame(
+                self.inputs["wavefunction"], self.reference_files
+            )
+            self.options["reference_files"] = [str(path) for path in self.reference_files]
         self.output_root = Path(output_root).expanduser().resolve()
         self.multiwfn_exe = Path(multiwfn_exe).expanduser().resolve()
         self.vmd_exe = Path(vmd_exe).expanduser().resolve()
@@ -917,7 +1007,7 @@ class ScientificWorkflowRunner:
             primary = self.inputs.get("wavefunction") or self.inputs.get("neutral")
             if primary is None:
                 raise ScientificWorkflowValidationError("缺少主波函数文件。")
-            if self.workflow_id == WORKFLOW_DEFORMATION:
+            if self.workflow_id == WORKFLOW_DEFORMATION and self.method == "deformation":
                 atomwfn_source = self.multiwfn_exe.parent / "examples" / "atomwfn"
                 if not atomwfn_source.is_dir() or not any(atomwfn_source.glob("*.wfn")):
                     raise ScientificWorkflowValidationError(

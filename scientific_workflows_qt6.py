@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -171,6 +173,43 @@ class ScientificWorkflowPage(QWidget):
         self.input_form.setHorizontalSpacing(12)
         self.input_form.setVerticalSpacing(9)
         input_layout.addLayout(self.input_form)
+
+        self.reference_files_panel = QWidget()
+        reference_layout = QVBoxLayout(self.reference_files_panel)
+        reference_layout.setContentsMargins(0, 4, 0, 0)
+        reference_layout.setSpacing(8)
+        reference_title = QLabel("减去的参考体系")
+        reference_title.setObjectName("batchCardTitle")
+        reference_layout.addWidget(reference_title)
+        reference_hint = QLabel(
+            "可一次添加一个或多个片段/参考态波函数。软件按“目标体系 − 参考体系 1 − 参考体系 2 …”计算。"
+        )
+        reference_hint.setObjectName("batchHint")
+        reference_hint.setWordWrap(True)
+        reference_layout.addWidget(reference_hint)
+        self.reference_files_list = QListWidget()
+        self.reference_files_list.setSelectionMode(
+            QListWidget.SelectionMode.ExtendedSelection
+        )
+        self.reference_files_list.setMinimumHeight(105)
+        reference_layout.addWidget(self.reference_files_list)
+        reference_buttons = QHBoxLayout()
+        add_references = QPushButton("添加参考文件")
+        add_references.clicked.connect(self._add_reference_files)
+        remove_references = QPushButton("移除选中")
+        remove_references.clicked.connect(self._remove_reference_files)
+        reference_buttons.addWidget(add_references)
+        reference_buttons.addWidget(remove_references)
+        reference_buttons.addStretch(1)
+        reference_layout.addLayout(reference_buttons)
+        coordinate_hint = QLabel(
+            "重要：所有参考体系必须保留目标体系中的原始坐标和取向，并建议使用相同理论水平与基组；"
+            "不要让量化程序把片段重新转到标准取向。"
+        )
+        coordinate_hint.setObjectName("detailLabel")
+        coordinate_hint.setWordWrap(True)
+        reference_layout.addWidget(coordinate_hint)
+        input_layout.addWidget(self.reference_files_panel)
         layout.addWidget(input_card)
 
         settings_card, settings_layout = self._card(
@@ -203,9 +242,9 @@ class ScientificWorkflowPage(QWidget):
         self.fragments_label = settings_form.labelForField(self.fragments_edit)
 
         self.iso_spin = QDoubleSpinBox()
-        self.iso_spin.setDecimals(4)
-        self.iso_spin.setRange(0.0001, 1.0)
-        self.iso_spin.setSingleStep(0.005)
+        self.iso_spin.setDecimals(5)
+        self.iso_spin.setRange(0.00001, 1.0)
+        self.iso_spin.setSingleStep(0.0005)
         self.iso_spin.setValue(0.05)
         self.iso_spin.setSuffix(" a.u.")
         settings_form.addRow("正负等值面", self.iso_spin)
@@ -285,6 +324,13 @@ class ScientificWorkflowPage(QWidget):
 
     def configure(self, workflow_id: str) -> None:
         self.spec = science.workflow_spec(workflow_id)
+        # This page instance is shared by all data-driven workflows. Reset all
+        # result-only state when entering another workflow so a completed
+        # task's log and result directory never appear under the next one.
+        self.log.clear()
+        self.last_run_dir = ""
+        self.open_button.setEnabled(False)
+        self.reference_files_list.clear()
         self.toolbar_title.setText(self.spec.name)
         self.method_combo.blockSignals(True)
         self.method_combo.clear()
@@ -355,20 +401,38 @@ class ScientificWorkflowPage(QWidget):
         self.fragments_label.setVisible(
             self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
         )
+        show_references = (
+            self.spec.id == science.WORKFLOW_DEFORMATION
+            and method == "fragment_difference"
+        )
+        self.reference_files_panel.setVisible(show_references)
+        if "wavefunction" in self.role_rows:
+            self.role_rows["wavefunction"][0].setText(
+                "目标体系波函数" if show_references else (
+                    "分子波函数文件"
+                    if self.spec.id == science.WORKFLOW_DEFORMATION
+                    else self.spec.input_roles[0][1]
+                )
+            )
         show_iso = self.spec.id == science.WORKFLOW_DEFORMATION
         self.iso_spin.setVisible(show_iso)
         self.iso_label.setVisible(show_iso)
+        if show_iso:
+            self.iso_spin.setValue(0.0012 if show_references else 0.05)
         notes = {
             "iri": "生成 IRI 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
             "rdg": "生成 RDG 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
             "igmh": "片段使用 Multiwfn 原子选择语法，并用分号分开。程序不会静默修改全局 settings.ini。",
-            "strict": "三个体系必须具有相同几何、基组与理论水平；输入顺序会按 N、N+1、N-1 传给 Multiwfn。",
             "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
             "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
             "spin": "仅适用于包含有效开壳层信息的波函数。",
             "deformation": (
                 "按 Multiwfn 手册以同一几何下的分子密度减去球对称自由原子密度；"
                 "程序会使用 Multiwfn 随附的 atomwfn 数据，不会额外调用 Gaussian。"
+            ),
+            "fragment_difference": (
+                "按 Multiwfn 手册 3.7.1 与教程 4.5.5，在目标体系网格上依次减去所有参考体系电子密度。"
+                "适用于复合物 − 各孤立片段，也可用于同一几何下两个状态的密度差。"
             ),
         }
         self.method_note.setText(notes.get(method, self.spec.description))
@@ -391,6 +455,38 @@ class ScientificWorkflowPage(QWidget):
         chosen, _ = QFileDialog.getOpenFileName(self, f"选择{label}", "", f"支持的文件 ({patterns});;所有文件 (*)")
         if chosen:
             self.role_rows[role][1].setText(chosen)
+
+    def _add_reference_files(self) -> None:
+        patterns = " ".join(f"*{ext}" for ext in science.WAVEFUNCTION_EXTENSIONS)
+        chosen, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择要减去的参考体系波函数",
+            "",
+            f"支持的文件 ({patterns});;所有文件 (*)",
+        )
+        existing = {
+            str(self.reference_files_list.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(self.reference_files_list.count())
+        }
+        for raw_path in chosen:
+            path = str(Path(raw_path).expanduser().resolve())
+            if path in existing:
+                continue
+            item = QListWidgetItem(f"−  {Path(path).name}")
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setToolTip(path)
+            self.reference_files_list.addItem(item)
+            existing.add(path)
+
+    def _remove_reference_files(self) -> None:
+        for item in list(self.reference_files_list.selectedItems()):
+            self.reference_files_list.takeItem(self.reference_files_list.row(item))
+
+    def _reference_file_paths(self) -> list[str]:
+        return [
+            str(self.reference_files_list.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(self.reference_files_list.count())
+        ]
 
     def _browse_output(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "选择结果保存目录", self.output_edit.text().strip())
@@ -422,6 +518,7 @@ class ScientificWorkflowPage(QWidget):
             "excited_state": self.state_spin.value(),
             "nto_pairs": self.nto_pairs_spin.value(),
             "fragments": self.fragments_edit.text().strip(),
+            "reference_files": self._reference_file_paths(),
             "iso_value": self.iso_spin.value(),
             "keep_cubes": self.keep_cubes.isChecked(),
             "style_snapshot": copy.deepcopy(self.style_snapshot),

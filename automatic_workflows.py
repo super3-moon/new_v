@@ -27,7 +27,6 @@ AUTOMATION_SCHEMA_VERSION = 1
 WORKFLOW_SURFACE_ESP = "surface_esp"
 WORKFLOW_ORBITAL_DIAGRAM = "orbital_energy_diagram"
 WORKFLOW_WEAK_INTERACTION = "weak_interaction"
-WORKFLOW_FUKUI_DESCRIPTOR = "fukui_descriptor"
 WORKFLOW_EXCITED_STATE = "excited_state_density"
 WORKFLOW_SPIN_DENSITY = "spin_density"
 WORKFLOW_DEFORMATION_DENSITY = "density_difference_deformation"
@@ -130,15 +129,6 @@ def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
             handler="scientific_workflow",
         ),
         WorkflowDefinition(
-            id=WORKFLOW_FUKUI_DESCRIPTOR,
-            name="Fukui 与双描述符",
-            description="使用 N、N+1、N-1 波函数生成严格 CDFT 反应性网格。",
-            engine="Multiwfn + VMD",
-            input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
-            handler="scientific_workflow",
-            input_mode="three_charge_states",
-        ),
-        WorkflowDefinition(
             id=WORKFLOW_EXCITED_STATE,
             name="激发态空穴-电子与 NTO",
             description="读取激发态输出并生成空穴/电子、CDD 或主导 NTO 图像。",
@@ -158,7 +148,7 @@ def workflow_definitions() -> tuple[WorkflowDefinition, ...]:
         WorkflowDefinition(
             id=WORKFLOW_DEFORMATION_DENSITY,
             name="电子密度差／变形密度",
-            description="计算分子电子密度与自由原子叠加密度之差，并绘制电子积累与耗散区域。",
+            description="计算分子变形密度，或由目标体系减去一个或多个参考体系得到电子密度差。",
             engine="Multiwfn + VMD",
             input_extensions=SUPPORTED_WAVEFUNCTION_EXTENSIONS,
             handler="scientific_workflow",
