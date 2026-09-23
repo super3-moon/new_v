@@ -1216,6 +1216,7 @@ class MainWindow(QMainWindow):
         provider_label.setMinimumWidth(52)
         provider_row.addWidget(provider_label)
         self.ai_provider_combo = QComboBox()
+        self.ai_provider_combo.addItem("DeepSeek V4.1 Flash", "deepseek")
         self.ai_provider_combo.addItem("OpenAI", "openai")
         self.ai_provider_combo.addItem("Gemini", "gemini")
         self.ai_provider_combo.currentIndexChanged.connect(self._on_ai_provider_changed)
@@ -1236,7 +1237,7 @@ class MainWindow(QMainWindow):
         key_row.addWidget(key_label)
         self.ai_key_edit = QLineEdit()
         self.ai_key_edit.setEchoMode(QLineEdit.Password)
-        self.ai_key_edit.setPlaceholderText("OPENAI_API_KEY")
+        self.ai_key_edit.setPlaceholderText("DEEPSEEK_API_KEY")
         key_row.addWidget(self.ai_key_edit, 1)
         self.ai_key_toggle = QPushButton("显示")
         self.ai_key_toggle.setCheckable(True)
@@ -2678,7 +2679,7 @@ class MainWindow(QMainWindow):
 
     def _current_ai_provider(self) -> str:
         data = self.ai_provider_combo.currentData()
-        return str(data or "openai")
+        return str(data or "deepseek")
 
     def _toggle_ai_key_visibility(self, visible: bool) -> None:
         self.ai_key_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
@@ -2687,8 +2688,16 @@ class MainWindow(QMainWindow):
     def _on_ai_provider_changed(self) -> None:
         provider = self._current_ai_provider()
         current_model = self.ai_model_edit.text().strip()
-        known_defaults = {"gpt-4.1-mini", "gemini-3.5-flash"}
-        if provider == "gemini":
+        known_defaults = {"deepseek-flash", "gpt-4.1-mini", "gemini-3.5-flash"}
+        if provider == "deepseek":
+            self.ai_key_edit.setPlaceholderText("DEEPSEEK_API_KEY")
+            if not current_model or current_model in known_defaults:
+                self.ai_model_edit.setText(
+                    core.os.environ.get(
+                        "DEEPSEEK_VMD_STYLE_MODEL", "deepseek-flash"
+                    )
+                )
+        elif provider == "gemini":
             self.ai_key_edit.setPlaceholderText("GEMINI_API_KEY")
             if not current_model or current_model in known_defaults:
                 self.ai_model_edit.setText(

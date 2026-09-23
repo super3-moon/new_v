@@ -1653,6 +1653,28 @@ def _extract_gemini_response_text(payload: dict) -> str:
     return "\n".join(chunks).strip()
 
 
+def _extract_chat_completion_text(payload: dict) -> str:
+    choices = payload.get("choices", [])
+    if not isinstance(choices, list):
+        return ""
+    chunks: list[str] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            chunks.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    chunks.append(part["text"])
+    return "\n".join(chunks).strip()
+
+
 def _parse_ai_json_text(text: str) -> dict:
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
@@ -1745,6 +1767,74 @@ def _recognize_openai_style_from_image(
         raise RuntimeError(f"AI 返回 JSON 解析失败：{exc}") from exc
 
 
+def _recognize_deepseek_style_from_image(
+    image_path: Path | str,
+    api_key: str = "",
+    model: str = "",
+    image_context: str = "",
+) -> dict:
+    _path, raw, mime = _read_ai_image(image_path)
+    key = (api_key or os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    if not key:
+        raise ValueError(
+            "请填写 DeepSeek API Key，或设置 DEEPSEEK_API_KEY 环境变量。"
+        )
+
+    model_name = (
+        model
+        or os.environ.get("DEEPSEEK_VMD_STYLE_MODEL")
+        or "deepseek-flash"
+    ).strip()
+    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    prompt = (
+        build_ai_style_prompt(image_context)
+        + "\nReturn JSON matching this schema exactly:\n"
+        + json.dumps(AI_STYLE_SCHEMA, ensure_ascii=False, separators=(",", ":"))
+    )
+    body = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url, "detail": "high"},
+                    },
+                ],
+            }
+        ],
+        "response_format": {"type": "json_object"},
+    }
+
+    request = urllib_request.Request(
+        "https://api.deepseek.com/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=90) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"DeepSeek API 请求失败（{exc.code}）：{detail}") from exc
+    except urllib_error.URLError as exc:
+        raise RuntimeError(f"DeepSeek API 连接失败：{exc.reason}") from exc
+
+    text = _extract_chat_completion_text(response_payload)
+    if not text:
+        raise RuntimeError("DeepSeek API 未返回可解析的结构化结果。")
+    try:
+        return normalize_ai_style_guess(_parse_ai_json_text(text))
+    except Exception as exc:
+        raise RuntimeError(f"AI 返回 JSON 解析失败：{exc}") from exc
+
+
 def _recognize_gemini_style_from_image(
     image_path: Path | str,
     api_key: str = "",
@@ -1814,10 +1904,14 @@ def recognize_ai_style_from_image(
     image_path: Path | str,
     api_key: str = "",
     model: str = "",
-    provider: str = "openai",
+    provider: str = "deepseek",
     image_context: str = "",
 ) -> dict:
-    provider_key = (provider or "openai").strip().lower()
+    provider_key = (provider or "deepseek").strip().lower()
+    if provider_key == "deepseek":
+        return _recognize_deepseek_style_from_image(
+            image_path, api_key=api_key, model=model, image_context=image_context
+        )
     if provider_key == "gemini":
         return _recognize_gemini_style_from_image(
             image_path, api_key=api_key, model=model, image_context=image_context
