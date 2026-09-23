@@ -163,6 +163,22 @@ class ScientificWorkflowPage(QWidget):
         self.method_note.setObjectName("detailLabel")
         self.method_note.setWordWrap(True)
         method_layout.addWidget(self.method_note)
+        self.weak_scatter_check = QCheckBox(
+            "同时生成填色散点图（内置绘图，无需安装 Gnuplot）"
+        )
+        self.weak_scatter_check.setChecked(False)
+        self.weak_scatter_check.setToolTip(
+            "RDG/NCI 绘制 RDG，IRI 绘制 IRI，IGMH 绘制片段间 δg；色标与 VMD 等值面一致。"
+        )
+        method_layout.addWidget(self.weak_scatter_check)
+        self.igmh_prescreen_check = QCheckBox(
+            "启用 IGMH 片段间格点加速（推荐，IGMvdwscl=2.0）"
+        )
+        self.igmh_prescreen_check.setChecked(True)
+        self.igmh_prescreen_check.setToolTip(
+            "只计算片段范德华表面重叠区域，可显著降低 δginter 计算量；不会修改全局 settings.ini。"
+        )
+        method_layout.addWidget(self.igmh_prescreen_check)
         layout.addWidget(method_card)
 
         input_card, input_layout = self._card(
@@ -331,6 +347,9 @@ class ScientificWorkflowPage(QWidget):
         self.last_run_dir = ""
         self.open_button.setEnabled(False)
         self.reference_files_list.clear()
+        if self.spec.id == science.WORKFLOW_WEAK:
+            self.weak_scatter_check.setChecked(False)
+            self.igmh_prescreen_check.setChecked(True)
         self.toolbar_title.setText(self.spec.name)
         self.method_combo.blockSignals(True)
         self.method_combo.clear()
@@ -387,6 +406,9 @@ class ScientificWorkflowPage(QWidget):
 
     def _sync_method_options(self) -> None:
         method = str(self.method_combo.currentData() or "")
+        is_weak = self.spec.id == science.WORKFLOW_WEAK
+        self.weak_scatter_check.setVisible(is_weak)
+        self.igmh_prescreen_check.setVisible(is_weak and method == "igmh")
         self.state_spin.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
         self.state_label.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
         self.nto_pairs_spin.setVisible(
@@ -420,9 +442,18 @@ class ScientificWorkflowPage(QWidget):
         if show_iso:
             self.iso_spin.setValue(0.0012 if show_references else 0.05)
         notes = {
-            "iri": "生成 IRI 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
-            "rdg": "生成 RDG 与 sign(λ₂)ρ 网格；随后自动打开 VMD，供你自由调整等值面、角度和显示效果。",
-            "igmh": "片段使用 Multiwfn 原子选择语法，并用分号分开。程序不会静默修改全局 settings.ini。",
+            "iri": (
+                "适合在一张图中同时观察整个体系的化学键和各种强弱相互作用；"
+                "生成 IRI 与 sign(λ₂)ρ 网格，随后可在 VMD 中自由调整。"
+            ),
+            "rdg": (
+                "经典 NCI/RDG 分析，对网格质量较敏感；生成 RDG 与 sign(λ₂)ρ 网格，"
+                "随后可在 VMD 中自由调整。"
+            ),
+            "igmh": (
+                "适合明确划分片段后专门分析片段间相互作用。片段使用 Multiwfn 原子选择语法并用分号分开；"
+                "推荐的格点加速使用任务专属设置，不修改全局 settings.ini。"
+            ),
             "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
             "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
             "spin": "仅适用于包含有效开壳层信息的波函数。",
@@ -518,6 +549,8 @@ class ScientificWorkflowPage(QWidget):
             "excited_state": self.state_spin.value(),
             "nto_pairs": self.nto_pairs_spin.value(),
             "fragments": self.fragments_edit.text().strip(),
+            "draw_scatter": self.weak_scatter_check.isChecked(),
+            "igmh_prescreen": self.igmh_prescreen_check.isChecked(),
             "reference_files": self._reference_file_paths(),
             "iso_value": self.iso_spin.value(),
             "keep_cubes": self.keep_cubes.isChecked(),

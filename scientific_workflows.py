@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 import orbital_data
 import orbital_vmd
@@ -141,6 +141,16 @@ _WEAK_DISPLAY_PROFILES: dict[str, dict[str, object]] = {
         "color_max": 0.02,
         "color_midpoint": 0.666,
         "skeleton_scale": 0.7,
+        "scatter_x_min": -0.05,
+        "scatter_x_max": 0.05,
+        "scatter_x_step": 0.01,
+        "scatter_y_min": 0.0,
+        "scatter_y_max": 5.0,
+        "scatter_y_step": 0.5,
+        "scatter_x_column": 4,
+        "scatter_y_column": 5,
+        "scatter_y_label": "IRI (a.u.)",
+        "scatter_filename": "IRI_Color_Filled_Scatter.png",
     },
     # Multiwfn 2026.7.11 examples/RDGfill2.vmd explicitly identifies this
     # scale as the more reasonable variant of RDGfill.vmd.
@@ -153,6 +163,16 @@ _WEAK_DISPLAY_PROFILES: dict[str, dict[str, object]] = {
         "color_max": 0.02,
         "color_midpoint": 0.666,
         "skeleton_scale": 1.0,
+        "scatter_x_min": -0.05,
+        "scatter_x_max": 0.05,
+        "scatter_x_step": 0.01,
+        "scatter_y_min": 0.0,
+        "scatter_y_max": 2.0,
+        "scatter_y_step": 0.2,
+        "scatter_x_column": 4,
+        "scatter_y_column": 5,
+        "scatter_y_label": "RDG",
+        "scatter_filename": "RDG_Color_Filled_Scatter.png",
     },
     # Multiwfn 2026.7.11 examples/IGM_inter.vmd
     "igmh": {
@@ -164,6 +184,16 @@ _WEAK_DISPLAY_PROFILES: dict[str, dict[str, object]] = {
         "color_max": 0.05,
         "color_midpoint": 0.5,
         "skeleton_scale": 1.0,
+        "scatter_x_min": -0.05,
+        "scatter_x_max": 0.05,
+        "scatter_x_step": 0.01,
+        "scatter_y_min": 0.0,
+        "scatter_y_max": 0.08,
+        "scatter_y_step": 0.01,
+        "scatter_x_column": 4,
+        "scatter_y_column": 1,
+        "scatter_y_label": "delta-g(inter) (a.u.)",
+        "scatter_filename": "IGMH_inter_Color_Filled_Scatter.png",
     },
 }
 
@@ -234,6 +264,188 @@ def build_weak_interaction_scene_tcl(
         lines.append("material change specular Opaque 0.300000")
     lines.extend(["display resetview", "display update ui"])
     return "\n".join(lines) + "\n"
+
+
+def _plot_font(size: int, *, bold: bool = False):
+    candidates = (
+        Path(os.environ.get("WINDIR", r"C:\Windows"))
+        / "Fonts"
+        / ("arialbd.ttf" if bold else "arial.ttf"),
+        Path("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
+    )
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(str(candidate), size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _centered_text(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[float, float],
+    text: str,
+    font,
+    *,
+    fill: str | tuple[int, int, int] = "black",
+) -> None:
+    box = draw.textbbox((0, 0), text, font=font)
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    draw.text((xy[0] - width / 2, xy[1] - height / 2), text, font=font, fill=fill)
+
+
+def _weak_palette_rgb(value: float, profile: Mapping[str, object]) -> tuple[int, int, int]:
+    minimum = float(profile["color_min"])
+    maximum = float(profile["color_max"])
+    fraction = float(profile["color_midpoint"])
+    midpoint = minimum + (maximum - minimum) * fraction
+    value = max(minimum, min(maximum, value))
+    if value <= midpoint:
+        ratio = 0.0 if midpoint <= minimum else (value - minimum) / (midpoint - minimum)
+        return (0, int(round(255 * ratio)), int(round(255 * (1.0 - ratio))))
+    ratio = 1.0 if maximum <= midpoint else (value - midpoint) / (maximum - midpoint)
+    return (int(round(255 * ratio)), int(round(255 * (1.0 - ratio))), 0)
+
+
+def render_weak_interaction_scatter(
+    data_path: Path | str,
+    method: str,
+    output_path: Path | str,
+    *,
+    width: int = 1600,
+    height: int = 1100,
+) -> Path:
+    """Render Multiwfn's color-filled weak-interaction scatter plot as PNG.
+
+    The axes, columns and BGR scale mirror Multiwfn's bundled RDGscatter,
+    IRIscatter and IGMscatter gnuplot scripts, while avoiding an external
+    gnuplot/Ghostscript dependency.
+    """
+    source = Path(data_path).expanduser().resolve()
+    if not source.is_file() or source.stat().st_size <= 0:
+        raise ScientificWorkflowError("Multiwfn 未生成填色散点图数据 output.txt。")
+    profile = weak_interaction_display_profile(method)
+    output = Path(output_path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    width = max(900, int(width))
+    height = max(650, int(height))
+    image = Image.new("RGB", (width, height), "white")
+    left = max(115, int(width * 0.105))
+    right = width - max(235, int(width * 0.16))
+    top = max(50, int(height * 0.055))
+    bottom = height - max(125, int(height * 0.135))
+    plot_width = max(1, right - left)
+    plot_height = max(1, bottom - top)
+    pixels = image.load()
+
+    x_min = float(profile["scatter_x_min"])
+    x_max = float(profile["scatter_x_max"])
+    y_min = float(profile["scatter_y_min"])
+    y_max = float(profile["scatter_y_max"])
+    x_column = int(profile["scatter_x_column"]) - 1
+    y_column = int(profile["scatter_y_column"]) - 1
+    required = max(x_column, y_column)
+    plotted = 0
+    with source.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            fields = line.split()
+            if len(fields) <= required:
+                continue
+            try:
+                x_value = float(fields[x_column])
+                y_value = float(fields[y_column])
+            except ValueError:
+                continue
+            if not (x_min <= x_value <= x_max and y_min <= y_value <= y_max):
+                continue
+            x_pixel = left + int(round((x_value - x_min) * plot_width / (x_max - x_min)))
+            y_pixel = bottom - int(round((y_value - y_min) * plot_height / (y_max - y_min)))
+            x_pixel = max(left, min(right, x_pixel))
+            y_pixel = max(top, min(bottom, y_pixel))
+            pixels[x_pixel, y_pixel] = _weak_palette_rgb(x_value, profile)
+            plotted += 1
+    if plotted == 0:
+        raise ScientificWorkflowError("填色散点图数据中没有位于默认显示范围内的有效点。")
+
+    draw = ImageDraw.Draw(image)
+    axis_font = _plot_font(max(20, int(height * 0.025)))
+    tick_font = _plot_font(max(16, int(height * 0.019)))
+    draw.rectangle((left, top, right, bottom), outline="black", width=3)
+
+    def tick_values(start: float, stop: float, step: float) -> list[float]:
+        count = int(round((stop - start) / step))
+        return [start + index * step for index in range(count + 1)]
+
+    x_step = float(profile["scatter_x_step"])
+    for value in tick_values(x_min, x_max, x_step):
+        pixel = left + int(round((value - x_min) * plot_width / (x_max - x_min)))
+        draw.line((pixel, bottom, pixel, bottom + 10), fill="black", width=2)
+        _centered_text(draw, (pixel, bottom + 34), f"{value:.2f}", tick_font)
+
+    y_step = float(profile["scatter_y_step"])
+    y_precision = 2 if y_max <= 0.1 else 1
+    for value in tick_values(y_min, y_max, y_step):
+        pixel = bottom - int(round((value - y_min) * plot_height / (y_max - y_min)))
+        draw.line((left - 10, pixel, left, pixel), fill="black", width=2)
+        label = f"{value:.{y_precision}f}"
+        box = draw.textbbox((0, 0), label, font=tick_font)
+        draw.text(
+            (left - 18 - (box[2] - box[0]), pixel - (box[3] - box[1]) / 2),
+            label,
+            font=tick_font,
+            fill="black",
+        )
+
+    _centered_text(
+        draw,
+        ((left + right) / 2, height - max(45, int(height * 0.05))),
+        "sign(lambda2)rho (a.u.)",
+        axis_font,
+    )
+    y_label = str(profile["scatter_y_label"])
+    y_box = draw.textbbox((0, 0), y_label, font=axis_font)
+    y_layer = Image.new(
+        "RGBA", (y_box[2] - y_box[0] + 20, y_box[3] - y_box[1] + 20), (255, 255, 255, 0)
+    )
+    ImageDraw.Draw(y_layer).text((10, 10), y_label, font=axis_font, fill="black")
+    y_layer = y_layer.rotate(90, expand=True)
+    image.paste(y_layer, (30, int((top + bottom - y_layer.height) / 2)), y_layer)
+
+    bar_left = right + max(65, int(width * 0.045))
+    bar_right = bar_left + max(30, int(width * 0.026))
+    color_min = float(profile["color_min"])
+    color_max = float(profile["color_max"])
+    for pixel in range(top, bottom + 1):
+        value = color_max - (pixel - top) * (color_max - color_min) / plot_height
+        draw.line((bar_left, pixel, bar_right, pixel), fill=_weak_palette_rgb(value, profile))
+    draw.rectangle((bar_left, top, bar_right, bottom), outline="black", width=2)
+    for index in range(7):
+        value = color_min + index * (color_max - color_min) / 6.0
+        pixel = bottom - int(round(index * plot_height / 6.0))
+        draw.line((bar_right, pixel, bar_right + 9, pixel), fill="black", width=2)
+        draw.text((bar_right + 16, pixel - 10), f"{value:.3f}", font=tick_font, fill="black")
+
+    image.save(output, format="PNG", optimize=True)
+    return output
+
+
+def build_igmh_prescreen_settings(source: Path | str, target: Path | str) -> Path:
+    """Create a task-local settings.ini with the manual-recommended IGMvdwscl=2."""
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_file():
+        raise ScientificWorkflowValidationError("Multiwfn 目录中缺少 settings.ini，无法启用 IGMH 加速。")
+    text = source_path.read_text(encoding="utf-8", errors="strict")
+    pattern = re.compile(r"(?im)^(\s*IGMvdwscl\s*=\s*)[^/\r\n]+")
+    updated, count = pattern.subn(r"\g<1>2.0  ", text, count=1)
+    if count != 1:
+        raise ScientificWorkflowValidationError(
+            "当前 Multiwfn settings.ini 不含 IGMvdwscl，无法启用片段间格点加速。"
+        )
+    target_path = Path(target).expanduser().resolve()
+    _write_text(target_path, updated)
+    return target_path
 
 
 def _clean_part(value: str, fallback: str = "result") -> str:
@@ -374,10 +586,16 @@ def build_multiwfn_sequence(
     """Return a tested Multiwfn 2026.7.11 menu sequence."""
     grid = max(1, min(3, int(options.get("grid_quality") or 2)))
     if workflow_id == WORKFLOW_WEAK:
+        post_processing = ["3"]
+        if bool(options.get("draw_scatter", False)):
+            # Multiwfn manual 4.20.4 / 4.20.11 and bundled *scatter.gnu
+            # scripts: option 2 exports the scatter points after the Cube
+            # files have been exported by option 3.
+            post_processing.append("2")
         if method == "iri":
-            return f"20\n4\n{grid}\n3\n0\n0\nq\n"
+            return "\n".join(["20", "4", str(grid), *post_processing, "0", "0", "q", ""])
         if method == "rdg":
-            return f"20\n1\n{grid}\n3\n0\n0\nq\n"
+            return "\n".join(["20", "1", str(grid), *post_processing, "0", "0", "q", ""])
         if method == "igmh":
             fragments = [
                 value.strip()
@@ -389,7 +607,18 @@ def build_multiwfn_sequence(
                     "IGMH 至少需要两个片段；请用分号分隔，例如 1-12;13-25。"
                 )
             return "\n".join(
-                ["20", "11", str(len(fragments)), *fragments, str(grid), "3", "0", "0", "q", ""]
+                [
+                    "20",
+                    "11",
+                    str(len(fragments)),
+                    *fragments,
+                    str(grid),
+                    *post_processing,
+                    "0",
+                    "0",
+                    "q",
+                    "",
+                ]
             )
         raise ScientificWorkflowValidationError("未知的弱相互作用方法。")
 
@@ -461,9 +690,17 @@ def build_multiwfn_sequence(
     raise ScientificWorkflowValidationError(f"未知的自动化流程：{workflow_id}")
 
 
-def _expected_products(workflow_id: str, method: str) -> tuple[str, ...]:
+def _expected_products(
+    workflow_id: str,
+    method: str,
+    options: Mapping[str, object] | None = None,
+) -> tuple[str, ...]:
     if workflow_id == WORKFLOW_WEAK:
-        return ("sl2r.cub", "dg_inter.cub", "dg_intra.cub", "dg.cub") if method == "igmh" else ("func1.cub", "func2.cub")
+        if method == "igmh":
+            if bool((options or {}).get("igmh_prescreen", True)):
+                return ("sl2r.cub", "dg_inter.cub")
+            return ("sl2r.cub", "dg_inter.cub", "dg_intra.cub", "dg.cub")
+        return ("func1.cub", "func2.cub")
     if workflow_id == WORKFLOW_EXCITED and method == "hole_electron":
         return ("hole.cub", "electron.cub", "CDD.cub")
     if workflow_id == WORKFLOW_SPIN:
@@ -653,10 +890,15 @@ class ScientificWorkflowRunner:
         *,
         base_progress: float = 5.0,
         progress_span: float = 58.0,
+        settings_path: Path | None = None,
     ) -> None:
         _write_text(work / "multiwfn_input.txt", sequence)
+        command = [str(self.multiwfn_exe), str(wavefunction)]
+        if settings_path is not None:
+            command.extend(["-set", str(settings_path)])
+        command.extend(["-isilent", "1"])
         self._run_process(
-            [str(self.multiwfn_exe), str(wavefunction), "-isilent", "1"],
+            command,
             cwd=work,
             stdin_text=sequence,
             log_path=log,
@@ -1025,7 +1267,24 @@ class ScientificWorkflowRunner:
                 self.options,
                 nto_output=nto_file,
             )
-            self._run_multiwfn(primary, sequence, work, log_dir / "multiwfn.log")
+            settings_path: Path | None = None
+            if (
+                self.workflow_id == WORKFLOW_WEAK
+                and self.method == "igmh"
+                and bool(self.options.get("igmh_prescreen", True))
+            ):
+                settings_path = build_igmh_prescreen_settings(
+                    self.multiwfn_exe.parent / "settings.ini",
+                    work / "settings_igmh_prescreen.ini",
+                )
+                self._emit(4, "已启用 IGMH 片段间格点屏蔽（IGMvdwscl=2.0）")
+            self._run_multiwfn(
+                primary,
+                sequence,
+                work,
+                log_dir / "multiwfn.log",
+                settings_path=settings_path,
+            )
             self._emit(65, "正在检查 Multiwfn 输出")
             if self.workflow_id == WORKFLOW_EXCITED and self.method == "nto":
                 if not nto_file.is_file():
@@ -1034,11 +1293,34 @@ class ScientificWorkflowRunner:
                 cubes = self._generate_nto_cubes(nto_file, work, log_dir)
             else:
                 cubes = {}
-                for name in _expected_products(self.workflow_id, self.method):
+                for name in _expected_products(
+                    self.workflow_id, self.method, self.options
+                ):
                     path = work / name
                     if not path.is_file() or path.stat().st_size <= 64:
                         raise ScientificWorkflowError(f"Multiwfn 未生成预期文件：{name}")
                     cubes[name] = path
+            scatter_image: Path | None = None
+            scatter_data: list[str] = []
+            if (
+                self.workflow_id == WORKFLOW_WEAK
+                and bool(self.options.get("draw_scatter", False))
+            ):
+                self._emit(69, "正在绘制弱相互作用填色散点图")
+                profile = weak_interaction_display_profile(self.method)
+                scatter_image = render_weak_interaction_scatter(
+                    work / "output.txt",
+                    self.method,
+                    _unique_path(run_dir / str(profile["scatter_filename"])),
+                )
+                data_dir = run_dir / "data"
+                data_dir.mkdir(parents=True, exist_ok=True)
+                data_target = _unique_path(
+                    data_dir
+                    / f"{Path(str(profile['scatter_filename'])).stem}_data.txt"
+                )
+                shutil.copy2(work / "output.txt", data_target)
+                scatter_data.append(str(data_target))
             self._emit(73, "正在用 VMD 与 Tachyon 生成图片")
             render_pairs = _render_pairs(
                 self.workflow_id, self.method, cubes, self.options
@@ -1062,6 +1344,8 @@ class ScientificWorkflowRunner:
                 else:
                     self._emit(73 + 20 * (index - 1) / total, f"正在渲染 {label}")
                     images.append(str(self._render(label, surface, color, iso, work, run_dir, log_dir)))
+            if scatter_image is not None:
+                images.append(str(scatter_image))
             keep_cubes = bool(self.options.get("keep_cubes", True))
             collected: list[str] = []
             if keep_cubes:
@@ -1075,6 +1359,7 @@ class ScientificWorkflowRunner:
                     "status": "success",
                     "images": images,
                     "cubes": collected,
+                    "scatter_data": scatter_data,
                     "duration_seconds": round(time.monotonic() - started, 2),
                 }
             )
