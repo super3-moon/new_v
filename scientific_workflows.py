@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 import orbital_data
 import orbital_vmd
@@ -152,16 +152,16 @@ _WEAK_DISPLAY_PROFILES: dict[str, dict[str, object]] = {
         "scatter_y_label": "IRI (a.u.)",
         "scatter_filename": "IRI_Color_Filled_Scatter.png",
     },
-    # Multiwfn 2026.7.11 examples/RDGfill2.vmd explicitly identifies this
-    # scale as the more reasonable variant of RDGfill.vmd.
+    # Article 399 and examples/RDGscatter.gnu require this scale to match the
+    # color-filled scatter plot and the VMD isosurface exactly.
     "rdg": {
         "name": "Multiwfn RDG/NCI 推荐显示",
         "surface_field": "RDG",
         "color_field": "sign(λ₂)ρ",
         "iso_value": 0.5,
-        "color_min": -0.04,
+        "color_min": -0.035,
         "color_max": 0.02,
-        "color_midpoint": 0.666,
+        "color_midpoint": 0.5,
         "skeleton_scale": 1.0,
         "scatter_x_min": -0.05,
         "scatter_x_max": 0.05,
@@ -266,182 +266,114 @@ def build_weak_interaction_scene_tcl(
     return "\n".join(lines) + "\n"
 
 
-def _plot_font(size: int, *, bold: bool = False):
-    candidates = (
-        Path(os.environ.get("WINDIR", r"C:\Windows"))
-        / "Fonts"
-        / ("arialbd.ttf" if bold else "arial.ttf"),
-        Path("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
-    )
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(str(candidate), size=size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def _centered_text(
-    draw: ImageDraw.ImageDraw,
-    xy: tuple[float, float],
-    text: str,
-    font,
-    *,
-    fill: str | tuple[int, int, int] = "black",
-) -> None:
-    box = draw.textbbox((0, 0), text, font=font)
-    width = box[2] - box[0]
-    height = box[3] - box[1]
-    draw.text((xy[0] - width / 2, xy[1] - height / 2), text, font=font, fill=fill)
-
-
-def _weak_palette_rgb(value: float, profile: Mapping[str, object]) -> tuple[int, int, int]:
-    minimum = float(profile["color_min"])
-    maximum = float(profile["color_max"])
-    fraction = float(profile["color_midpoint"])
-    midpoint = minimum + (maximum - minimum) * fraction
-    value = max(minimum, min(maximum, value))
-    if value <= midpoint:
-        ratio = 0.0 if midpoint <= minimum else (value - minimum) / (midpoint - minimum)
-        return (0, int(round(255 * ratio)), int(round(255 * (1.0 - ratio))))
-    ratio = 1.0 if maximum <= midpoint else (value - midpoint) / (maximum - midpoint)
-    return (int(round(255 * ratio)), int(round(255 * (1.0 - ratio))), 0)
-
-
-def render_weak_interaction_scatter(
-    data_path: Path | str,
+def build_weak_interaction_gnuplot_script(
     method: str,
-    output_path: Path | str,
     *,
-    width: int = 1600,
-    height: int = 1100,
-) -> Path:
-    """Render Multiwfn's color-filled weak-interaction scatter plot as PNG.
+    data_filename: str = "output.txt",
+    output_filename: str | None = None,
+) -> str:
+    """Build a PNG script with the same semantics as Multiwfn's examples.
 
-    The axes, columns and BGR scale mirror Multiwfn's bundled RDGscatter,
-    IRIscatter and IGMscatter gnuplot scripts, while avoiding an external
-    gnuplot/Ghostscript dependency.
+    Article 399 explicitly relies on Gnuplot's point renderer, enhanced text,
+    rotated ticks and method-specific palette.  These details must not be
+    approximated with a generic raster drawing library.
     """
-    source = Path(data_path).expanduser().resolve()
-    if not source.is_file() or source.stat().st_size <= 0:
-        raise ScientificWorkflowError("Multiwfn 未生成填色散点图数据 output.txt。")
     profile = weak_interaction_display_profile(method)
-    output = Path(output_path).expanduser().resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-
-    width = max(900, int(width))
-    height = max(650, int(height))
-    image = Image.new("RGB", (width, height), "white")
-    left = max(115, int(width * 0.105))
-    right = width - max(235, int(width * 0.16))
-    top = max(50, int(height * 0.055))
-    bottom = height - max(125, int(height * 0.135))
-    plot_width = max(1, right - left)
-    plot_height = max(1, bottom - top)
-    pixels = image.load()
-
-    x_min = float(profile["scatter_x_min"])
-    x_max = float(profile["scatter_x_max"])
-    y_min = float(profile["scatter_y_min"])
-    y_max = float(profile["scatter_y_max"])
-    x_column = int(profile["scatter_x_column"]) - 1
-    y_column = int(profile["scatter_y_column"]) - 1
-    required = max(x_column, y_column)
-    plotted = 0
-    with source.open("r", encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
-            fields = line.split()
-            if len(fields) <= required:
-                continue
-            try:
-                x_value = float(fields[x_column])
-                y_value = float(fields[y_column])
-            except ValueError:
-                continue
-            if not (x_min <= x_value <= x_max and y_min <= y_value <= y_max):
-                continue
-            x_pixel = left + int(round((x_value - x_min) * plot_width / (x_max - x_min)))
-            y_pixel = bottom - int(round((y_value - y_min) * plot_height / (y_max - y_min)))
-            x_pixel = max(left, min(right, x_pixel))
-            y_pixel = max(top, min(bottom, y_pixel))
-            pixels[x_pixel, y_pixel] = _weak_palette_rgb(x_value, profile)
-            plotted += 1
-    if plotted == 0:
-        raise ScientificWorkflowError("填色散点图数据中没有位于默认显示范围内的有效点。")
-
-    draw = ImageDraw.Draw(image)
-    axis_font = _plot_font(max(20, int(height * 0.025)))
-    tick_font = _plot_font(max(16, int(height * 0.019)))
-    draw.rectangle((left, top, right, bottom), outline="black", width=3)
-
-    def tick_values(start: float, stop: float, step: float) -> list[float]:
-        count = int(round((stop - start) / step))
-        return [start + index * step for index in range(count + 1)]
-
-    x_step = float(profile["scatter_x_step"])
-    for value in tick_values(x_min, x_max, x_step):
-        pixel = left + int(round((value - x_min) * plot_width / (x_max - x_min)))
-        draw.line((pixel, bottom, pixel, bottom + 10), fill="black", width=2)
-        _centered_text(draw, (pixel, bottom + 34), f"{value:.2f}", tick_font)
-
-    y_step = float(profile["scatter_y_step"])
-    y_precision = 2 if y_max <= 0.1 else 1
-    for value in tick_values(y_min, y_max, y_step):
-        pixel = bottom - int(round((value - y_min) * plot_height / (y_max - y_min)))
-        draw.line((left - 10, pixel, left, pixel), fill="black", width=2)
-        label = f"{value:.{y_precision}f}"
-        box = draw.textbbox((0, 0), label, font=tick_font)
-        draw.text(
-            (left - 18 - (box[2] - box[0]), pixel - (box[3] - box[1]) / 2),
-            label,
-            font=tick_font,
-            fill="black",
-        )
-
-    _centered_text(
-        draw,
-        ((left + right) / 2, height - max(45, int(height * 0.05))),
-        "sign(lambda2)rho (a.u.)",
-        axis_font,
+    output_name = output_filename or str(profile["scatter_filename"])
+    if any(
+        character in value
+        for value in (data_filename, output_name)
+        for character in "'\r\n"
+    ):
+        raise ScientificWorkflowValidationError("散点图文件名包含不支持的字符。")
+    settings = {
+        "rdg": {
+            "ylabel": "RDG",
+            "palette": '-0.035 "blue", -0.0075 "green", 0.020 "red"',
+            "cb_format": "%.3f",
+            "cb_min": -0.035,
+            "cb_step": 0.005,
+            "cb_max": 0.020,
+        },
+        "iri": {
+            "ylabel": "IRI (a.u.)",
+            "palette": '-0.040 "blue", 0.000 "green", 0.020 "red"',
+            "cb_format": "%.2f",
+            "cb_min": -0.04,
+            "cb_step": 0.01,
+            "cb_max": 0.02,
+        },
+        "igmh": {
+            "ylabel": "δg (a.u.)",
+            "palette": '-0.050 "blue", 0.000 "green", 0.050 "red"',
+            "cb_format": "%.3f",
+            "cb_min": -0.05,
+            "cb_step": 0.01,
+            "cb_max": 0.05,
+        },
+    }[method]
+    y_format = "%.2f" if float(profile["scatter_y_max"]) <= 0.1 else "%.1f"
+    return "\n".join(
+        [
+            'set terminal pngcairo enhanced color size 1800,1260 font "Arial,28" linewidth 2',
+            "set encoding utf8",
+            f"set output '{output_name}'",
+            "unset key",
+            f"set ylabel '{settings['ylabel']}' font \"Arial,34\"",
+            "set xlabel 'sign(λ_2)ρ (a.u.)' font \"Arial,34\"",
+            "set pm3d map",
+            f"set palette defined ({settings['palette']})",
+            f'set format y "{y_format}"',
+            'set format x "%.2f"',
+            f'set format cb "{settings["cb_format"]}"',
+            "set border lw 3",
+            (
+                f"set xtics {float(profile['scatter_x_min']):g},"
+                f"{float(profile['scatter_x_step']):g},"
+                f"{float(profile['scatter_x_max']):g} nomirror rotate font \"Arial,28\""
+            ),
+            (
+                f"set ytics {float(profile['scatter_y_min']):g},"
+                f"{float(profile['scatter_y_step']):g},"
+                f"{float(profile['scatter_y_max']):g} nomirror font \"Arial,28\""
+            ),
+            (
+                f"set cbtics {float(settings['cb_min']):g},"
+                f"{float(settings['cb_step']):g},"
+                f"{float(settings['cb_max']):g} nomirror font \"Arial,28\""
+            ),
+            (
+                f"set xrange [{float(profile['scatter_x_min']):g}:"
+                f"{float(profile['scatter_x_max']):g}]"
+            ),
+            (
+                f"set yrange [{float(profile['scatter_y_min']):g}:"
+                f"{float(profile['scatter_y_max']):g}]"
+            ),
+            f"set cbrange [{float(settings['cb_min']):g}:{float(settings['cb_max']):g}]",
+            (
+                f"plot '{data_filename}' using {int(profile['scatter_x_column'])}:"
+                f"{int(profile['scatter_y_column'])}:{int(profile['scatter_x_column'])} "
+                "with points pointtype 31 pointsize 0.3 palette notitle"
+            ),
+            "",
+        ]
     )
-    y_label = str(profile["scatter_y_label"])
-    y_box = draw.textbbox((0, 0), y_label, font=axis_font)
-    y_layer = Image.new(
-        "RGBA", (y_box[2] - y_box[0] + 20, y_box[3] - y_box[1] + 20), (255, 255, 255, 0)
-    )
-    ImageDraw.Draw(y_layer).text((10, 10), y_label, font=axis_font, fill="black")
-    y_layer = y_layer.rotate(90, expand=True)
-    image.paste(y_layer, (30, int((top + bottom - y_layer.height) / 2)), y_layer)
-
-    bar_left = right + max(65, int(width * 0.045))
-    bar_right = bar_left + max(30, int(width * 0.026))
-    color_min = float(profile["color_min"])
-    color_max = float(profile["color_max"])
-    for pixel in range(top, bottom + 1):
-        value = color_max - (pixel - top) * (color_max - color_min) / plot_height
-        draw.line((bar_left, pixel, bar_right, pixel), fill=_weak_palette_rgb(value, profile))
-    draw.rectangle((bar_left, top, bar_right, bottom), outline="black", width=2)
-    for index in range(7):
-        value = color_min + index * (color_max - color_min) / 6.0
-        pixel = bottom - int(round(index * plot_height / 6.0))
-        draw.line((bar_right, pixel, bar_right + 9, pixel), fill="black", width=2)
-        draw.text((bar_right + 16, pixel - 10), f"{value:.3f}", font=tick_font, fill="black")
-
-    image.save(output, format="PNG", optimize=True)
-    return output
 
 
 def build_igmh_prescreen_settings(source: Path | str, target: Path | str) -> Path:
     """Create a task-local settings.ini with the manual-recommended IGMvdwscl=2."""
     source_path = Path(source).expanduser().resolve()
     if not source_path.is_file():
-        raise ScientificWorkflowValidationError("Multiwfn 目录中缺少 settings.ini，无法启用 IGMH 加速。")
+        raise ScientificWorkflowValidationError(
+            "当前 Multiwfn 安装不支持“仅计算片段表面重叠区域”，请关闭该选项后重试。"
+        )
     text = source_path.read_text(encoding="utf-8", errors="strict")
     pattern = re.compile(r"(?im)^(\s*IGMvdwscl\s*=\s*)[^/\r\n]+")
     updated, count = pattern.subn(r"\g<1>2.0  ", text, count=1)
     if count != 1:
         raise ScientificWorkflowValidationError(
-            "当前 Multiwfn settings.ini 不含 IGMvdwscl，无法启用片段间格点加速。"
+            "当前 Multiwfn 版本不支持“仅计算片段表面重叠区域”，请关闭该选项后重试。"
         )
     target_path = Path(target).expanduser().resolve()
     _write_text(target_path, updated)
@@ -781,6 +713,17 @@ class ScientificWorkflowRunner:
             raise ScientificWorkflowValidationError("Multiwfn.exe 路径无效。")
         if not self.vmd_exe.is_file():
             raise ScientificWorkflowValidationError("vmd.exe 路径无效。")
+        self.gnuplot_exe: Path | None = None
+        if self.workflow_id == WORKFLOW_WEAK and bool(
+            self.options.get("draw_scatter", False)
+        ):
+            raw_gnuplot = str(self.options.get("gnuplot_path") or "").strip()
+            candidate = Path(raw_gnuplot).expanduser().resolve() if raw_gnuplot else None
+            if candidate is None or not candidate.is_file():
+                raise ScientificWorkflowValidationError(
+                    "生成填色散点图需要 Gnuplot；请选择 Gnuplot 安装目录 bin 文件夹中的 gnuplot.exe。"
+                )
+            self.gnuplot_exe = candidate
         snapshot = self.options.get("style_snapshot")
         if self.workflow_id == WORKFLOW_WEAK:
             # Weak-interaction maps use method-specific scientific fields and
@@ -943,6 +886,42 @@ class ScientificWorkflowRunner:
             cubes[f"NTO_{number:02d}_{side}.cub"] = path
         return cubes
 
+    def _render_weak_interaction_scatter(
+        self,
+        work: Path,
+        log_dir: Path,
+    ) -> tuple[Path, Path]:
+        data_path = work / "output.txt"
+        if not data_path.is_file() or data_path.stat().st_size <= 0:
+            raise ScientificWorkflowError("Multiwfn 未生成填色散点图数据 output.txt。")
+        if self.gnuplot_exe is None:
+            raise ScientificWorkflowValidationError("尚未选择有效的 gnuplot.exe。")
+        profile = weak_interaction_display_profile(self.method)
+        output_path = work / str(profile["scatter_filename"])
+        script_path = work / f"{self.method}_filled_scatter.gnu"
+        _write_text(
+            script_path,
+            build_weak_interaction_gnuplot_script(
+                self.method,
+                data_filename=data_path.name,
+                output_filename=output_path.name,
+            ),
+        )
+        self._run_process(
+            [str(self.gnuplot_exe), str(script_path)],
+            cwd=work,
+            stdin_text=None,
+            log_path=log_dir / "gnuplot_scatter.log",
+            timeout=max(60, int(self.options.get("gnuplot_timeout_seconds") or 3600)),
+            base_progress=69,
+            progress_span=3,
+        )
+        if not output_path.is_file() or output_path.stat().st_size <= 64:
+            raise ScientificWorkflowError(
+                "Gnuplot 未生成填色散点图，请检查所选程序路径和运行记录。"
+            )
+        return output_path, script_path
+
     @staticmethod
     def _terminate_process(process: subprocess.Popen) -> None:
         try:
@@ -954,39 +933,40 @@ class ScientificWorkflowRunner:
             except OSError:
                 pass
 
-    def _capture_weak_interaction_view(
+    def _capture_interactive_view(
         self,
-        surface_cube: Path,
-        color_cube: Path,
+        reference_cube: Path,
         work: Path,
         log_dir: Path,
+        *,
+        stem: str,
+        user_message: str,
+        style: Mapping[str, object],
+        rep0_commands: list[str] | None = None,
+        initial_scene_tcl: str | None = None,
     ) -> tuple[orbital_vmd.VmdViewState, Path]:
-        """Open the exact Multiwfn weak-interaction scene for free editing."""
-        protocol = work / "weak_interaction_view.capture"
-        native_state = work / "weak_interaction_final_state.vmd"
+        """Open a VMD scene once and capture the user's confirmed state."""
+        safe_stem = _clean_part(stem)
+        protocol = work / f"{safe_stem}.capture"
+        native_state = work / f"{safe_stem}_final_state.vmd"
         cancel_marker = orbital_vmd.capture_cancel_marker_path(protocol)
         error_log = orbital_vmd.capture_error_log_path(protocol)
         for path in (protocol, native_state, cancel_marker, error_log):
             path.unlink(missing_ok=True)
-        initial_scene = build_weak_interaction_scene_tcl(
-            self.method, surface_cube, color_cube
-        )
         capture_script = orbital_vmd.build_interactive_capture_tcl(
-            color_cube,
+            reference_cube,
             protocol,
-            {},
+            style,
+            rep0_commands=rep0_commands,
             width=1160,
             height=640,
             debug_state_path=native_state,
-            initial_scene_tcl=initial_scene,
+            initial_scene_tcl=initial_scene_tcl,
         )
-        script_path = work / "adjust_weak_interaction_view.vmd"
+        script_path = work / f"adjust_{safe_stem}.vmd"
         _write_text(script_path, capture_script)
-        log_path = log_dir / "vmd_adjust_view.log"
-        self._emit(
-            76,
-            "VMD 已打开：可自由调整弱相互作用等值面、角度与显示效果，确认后再渲染",
-        )
+        log_path = log_dir / f"vmd_adjust_{safe_stem}.log"
+        self._emit(76, user_message)
 
         existing_windows = orbital_vmd.vmd_display_window_handles()
         encoding = locale.getpreferredencoding(False) or "utf-8"
@@ -1088,12 +1068,34 @@ class ScientificWorkflowRunner:
         state = orbital_vmd.load_view_state(
             protocol,
             expected_geometry_fingerprint=orbital_vmd.cube_geometry_fingerprint(
-                color_cube
+                reference_cube
             ),
         )
-        state.save_json(work / "weak_interaction_viewpoint.json")
+        state.save_json(work / f"{safe_stem}_viewpoint.json")
         self._emit(86, "VMD 参数已确认，正在使用 Tachyon 渲染")
         return state, native_state
+
+    def _capture_weak_interaction_view(
+        self,
+        surface_cube: Path,
+        color_cube: Path,
+        work: Path,
+        log_dir: Path,
+    ) -> tuple[orbital_vmd.VmdViewState, Path]:
+        initial_scene = build_weak_interaction_scene_tcl(
+            self.method, surface_cube, color_cube
+        )
+        return self._capture_interactive_view(
+            color_cube,
+            work,
+            log_dir,
+            stem="weak_interaction_view",
+            user_message=(
+                "VMD 已打开：可自由调整弱相互作用等值面、角度与显示效果，确认后再渲染"
+            ),
+            style={},
+            initial_scene_tcl=initial_scene,
+        )
 
     def _render_weak_interaction(
         self,
@@ -1140,6 +1142,60 @@ class ScientificWorkflowRunner:
         raw = Path(str(scene_output) + ".bmp")
         if not raw.is_file() or raw.stat().st_size <= 64:
             raise ScientificWorkflowError(f"VMD 未生成 {label} 的 Tachyon 渲染文件。")
+        png = _unique_path(root / f"{_clean_part(label)}.png")
+        with Image.open(raw) as image:
+            image.convert("RGB").save(png, format="PNG", optimize=True)
+        return png
+
+    def _render_spin_density(
+        self,
+        label: str,
+        surface_cube: Path,
+        iso: float,
+        work: Path,
+        root: Path,
+        log_dir: Path,
+    ) -> Path:
+        style = copy.deepcopy(dict(self.style_snapshot["style"]))
+        rep0 = list(self.style_snapshot.get("rep0_commands") or [])
+        style["default_iso_value"] = float(iso)
+        state, native_state = self._capture_interactive_view(
+            surface_cube,
+            work,
+            log_dir,
+            stem="spin_density_view",
+            user_message=(
+                "VMD 已打开：可自由调整自旋密度等值面、角度与显示效果，确认后再渲染"
+            ),
+            style=style,
+            rep0_commands=rep0,
+        )
+        scene_output = work / f"{_clean_part(label)}_render.dat"
+        render_script = orbital_vmd.build_batch_render_tcl(
+            surface_cube,
+            scene_output,
+            state,
+            width=max(640, int(self.options.get("width") or 1400)),
+            height=max(480, int(self.options.get("height") or 1050)),
+            renderer="Tachyon",
+            native_state_path=native_state,
+            reference_cube_path=surface_cube,
+            restore_exact_color_slots=True,
+        )
+        script_path = work / "render_spin_density.vmd"
+        _write_text(script_path, render_script)
+        self._run_process(
+            [str(self.vmd_exe), "-dispdev", "text", "-eofexit", "-e", str(script_path)],
+            cwd=work,
+            stdin_text=None,
+            log_path=log_dir / "vmd_spin_density.log",
+            timeout=max(60, int(self.options.get("vmd_timeout_seconds") or 900)),
+            base_progress=87,
+            progress_span=8,
+        )
+        raw = Path(str(scene_output) + ".bmp")
+        if not raw.is_file() or raw.stat().st_size <= 64:
+            raise ScientificWorkflowError("VMD 未生成自旋密度的 Tachyon 渲染文件。")
         png = _unique_path(root / f"{_clean_part(label)}.png")
         with Image.open(raw) as image:
             image.convert("RGB").save(png, format="PNG", optimize=True)
@@ -1277,7 +1333,7 @@ class ScientificWorkflowRunner:
                     self.multiwfn_exe.parent / "settings.ini",
                     work / "settings_igmh_prescreen.ini",
                 )
-                self._emit(4, "已启用 IGMH 片段间格点屏蔽（IGMvdwscl=2.0）")
+                self._emit(4, "将仅计算片段表面重叠区域，以减少 IGMH 耗时")
             self._run_multiwfn(
                 primary,
                 sequence,
@@ -1306,13 +1362,15 @@ class ScientificWorkflowRunner:
                 self.workflow_id == WORKFLOW_WEAK
                 and bool(self.options.get("draw_scatter", False))
             ):
-                self._emit(69, "正在绘制弱相互作用填色散点图")
+                self._emit(69, "正在使用 Gnuplot 绘制弱相互作用填色散点图")
                 profile = weak_interaction_display_profile(self.method)
-                scatter_image = render_weak_interaction_scatter(
-                    work / "output.txt",
-                    self.method,
-                    _unique_path(run_dir / str(profile["scatter_filename"])),
+                rendered_scatter, scatter_script = self._render_weak_interaction_scatter(
+                    work, log_dir
                 )
+                scatter_image = _unique_path(
+                    run_dir / str(profile["scatter_filename"])
+                )
+                shutil.copy2(rendered_scatter, scatter_image)
                 data_dir = run_dir / "data"
                 data_dir.mkdir(parents=True, exist_ok=True)
                 data_target = _unique_path(
@@ -1320,7 +1378,9 @@ class ScientificWorkflowRunner:
                     / f"{Path(str(profile['scatter_filename'])).stem}_data.txt"
                 )
                 shutil.copy2(work / "output.txt", data_target)
-                scatter_data.append(str(data_target))
+                script_target = _unique_path(data_dir / scatter_script.name)
+                shutil.copy2(scatter_script, script_target)
+                scatter_data.extend((str(data_target), str(script_target)))
             self._emit(73, "正在用 VMD 与 Tachyon 生成图片")
             render_pairs = _render_pairs(
                 self.workflow_id, self.method, cubes, self.options
@@ -1338,6 +1398,15 @@ class ScientificWorkflowRunner:
                         str(
                             self._render_weak_interaction(
                                 label, surface, color, work, run_dir, log_dir
+                            )
+                        )
+                    )
+                elif self.workflow_id == WORKFLOW_SPIN:
+                    self._emit(74, "正在准备自旋密度 VMD 调整场景")
+                    images.append(
+                        str(
+                            self._render_spin_density(
+                                label, surface, iso, work, run_dir, log_dir
                             )
                         )
                     )

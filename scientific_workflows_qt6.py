@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -151,7 +152,7 @@ class ScientificWorkflowPage(QWidget):
 
         method_card, method_layout = self._card(
             "1 · 选择分析方法",
-            "同类方法共用文件校验、Multiwfn 调用、进度反馈、VMD 渲染和结果整理。",
+            "选择适合当前分析目标的方法。",
         )
         method_row = QHBoxLayout()
         method_row.addWidget(QLabel("分析方法"))
@@ -164,19 +165,34 @@ class ScientificWorkflowPage(QWidget):
         self.method_note.setWordWrap(True)
         method_layout.addWidget(self.method_note)
         self.weak_scatter_check = QCheckBox(
-            "同时生成填色散点图（内置绘图，无需安装 Gnuplot）"
+            "同时生成填色散点图"
         )
         self.weak_scatter_check.setChecked(False)
         self.weak_scatter_check.setToolTip(
-            "RDG/NCI 绘制 RDG，IRI 绘制 IRI，IGMH 绘制片段间 δg；色标与 VMD 等值面一致。"
+            "RDG/NCI 绘制 RDG，IRI 绘制 IRI，IGMH 绘制片段间 δg；需要 Gnuplot。"
         )
+        self.weak_scatter_check.toggled.connect(self._sync_weak_scatter_path)
         method_layout.addWidget(self.weak_scatter_check)
+
+        self.gnuplot_row_widget = QWidget()
+        gnuplot_row = QHBoxLayout(self.gnuplot_row_widget)
+        gnuplot_row.setContentsMargins(0, 0, 0, 0)
+        gnuplot_row.setSpacing(8)
+        gnuplot_row.addWidget(QLabel("Gnuplot 程序"))
+        self.gnuplot_edit = QLineEdit()
+        self.gnuplot_edit.setPlaceholderText("选择 Gnuplot 安装目录 bin 文件夹中的 gnuplot.exe")
+        gnuplot_row.addWidget(self.gnuplot_edit, 1)
+        browse_gnuplot = QPushButton("浏览")
+        browse_gnuplot.clicked.connect(self._browse_gnuplot)
+        gnuplot_row.addWidget(browse_gnuplot)
+        method_layout.addWidget(self.gnuplot_row_widget)
+
         self.igmh_prescreen_check = QCheckBox(
-            "启用 IGMH 片段间格点加速（推荐，IGMvdwscl=2.0）"
+            "仅计算片段表面重叠区域（推荐，可显著减少 IGMH 耗时）"
         )
         self.igmh_prescreen_check.setChecked(True)
         self.igmh_prescreen_check.setToolTip(
-            "只计算片段范德华表面重叠区域，可显著降低 δginter 计算量；不会修改全局 settings.ini。"
+            "只计算两个或多个片段表面的重叠区域；适用于绘制片段间 δg 等值面。"
         )
         method_layout.addWidget(self.igmh_prescreen_check)
         layout.addWidget(method_card)
@@ -408,6 +424,7 @@ class ScientificWorkflowPage(QWidget):
         method = str(self.method_combo.currentData() or "")
         is_weak = self.spec.id == science.WORKFLOW_WEAK
         self.weak_scatter_check.setVisible(is_weak)
+        self._sync_weak_scatter_path()
         self.igmh_prescreen_check.setVisible(is_weak and method == "igmh")
         self.state_spin.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
         self.state_label.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
@@ -451,12 +468,12 @@ class ScientificWorkflowPage(QWidget):
                 "随后可在 VMD 中自由调整。"
             ),
             "igmh": (
-                "适合明确划分片段后专门分析片段间相互作用。片段使用 Multiwfn 原子选择语法并用分号分开；"
-                "推荐的格点加速使用任务专属设置，不修改全局 settings.ini。"
+                "适合划分片段后专门分析片段间相互作用。"
+                "请用分号分隔不同片段，例如：1-12;13-25。"
             ),
             "hole_electron": "输出空穴、电子和电荷密度差；激发态信息来自对应 Gaussian/ORCA 输出。",
             "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
-            "spin": "仅适用于包含有效开壳层信息的波函数。",
+            "spin": "适用于包含有效开壳层信息的波函数；生成数据后可在 VMD 中自由调整。",
             "deformation": (
                 "按 Multiwfn 手册以同一几何下的分子密度减去球对称自由原子密度；"
                 "程序会使用 Multiwfn 随附的 atomwfn 数据，不会额外调用 Gaussian。"
@@ -470,12 +487,28 @@ class ScientificWorkflowPage(QWidget):
         if self.spec.id == science.WORKFLOW_WEAK:
             profile = science.weak_interaction_display_profile(method)
             self.weak_display_label.setText(
-                "弱相互作用显示参数（来自 Multiwfn 自带脚本）\n"
+                "默认显示参数\n"
                 f"{profile['surface_field']} 等值面 = {profile['iso_value']:g}；"
                 f"以 {profile['color_field']} 着色；BGR 范围 "
                 f"{profile['color_min']:g} ～ {profile['color_max']:g}。"
-                "这些只是正确的科学默认值，VMD 打开后仍可自由修改。"
+                "VMD 打开后可自由修改。"
             )
+
+    def _sync_weak_scatter_path(self) -> None:
+        self.gnuplot_row_widget.setVisible(
+            self.spec.id == science.WORKFLOW_WEAK
+            and self.weak_scatter_check.isChecked()
+        )
+
+    def _browse_gnuplot(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 Gnuplot 程序",
+            self.gnuplot_edit.text().strip(),
+            "Gnuplot (gnuplot.exe);;可执行程序 (*.exe);;所有文件 (*)",
+        )
+        if chosen:
+            self.gnuplot_edit.setText(chosen)
 
     def _browse_input(self, role: str) -> None:
         role_info = next((item for item in self.spec.input_roles if item[0] == role), None)
@@ -542,6 +575,17 @@ class ScientificWorkflowPage(QWidget):
     def _start(self) -> None:
         if self.is_running():
             return
+        if (
+            self.spec.id == science.WORKFLOW_WEAK
+            and self.weak_scatter_check.isChecked()
+            and not Path(self.gnuplot_edit.text().strip()).expanduser().is_file()
+        ):
+            QMessageBox.warning(
+                self,
+                "需要 Gnuplot",
+                "请先选择 Gnuplot 安装目录 bin 文件夹中的 gnuplot.exe。",
+            )
+            return
         inputs = {role: editor.text().strip() for role, (_label, editor, _button) in self.role_rows.items()}
         output = self.output_edit.text().strip()
         options = {
@@ -550,6 +594,7 @@ class ScientificWorkflowPage(QWidget):
             "nto_pairs": self.nto_pairs_spin.value(),
             "fragments": self.fragments_edit.text().strip(),
             "draw_scatter": self.weak_scatter_check.isChecked(),
+            "gnuplot_path": self.gnuplot_edit.text().strip(),
             "igmh_prescreen": self.igmh_prescreen_check.isChecked(),
             "reference_files": self._reference_file_paths(),
             "iso_value": self.iso_spin.value(),
@@ -588,6 +633,7 @@ class ScientificWorkflowPage(QWidget):
                     "output_dir": output,
                     "grid_quality": options["grid_quality"],
                     "keep_cubes": options["keep_cubes"],
+                    "gnuplot_path": options["gnuplot_path"],
                 }
             }
         )
@@ -655,3 +701,4 @@ class ScientificWorkflowPage(QWidget):
         index = self.grid_combo.findData(int(saved.get("grid_quality") or 2))
         self.grid_combo.setCurrentIndex(max(0, index))
         self.keep_cubes.setChecked(bool(saved.get("keep_cubes", True)))
+        self.gnuplot_edit.setText(str(saved.get("gnuplot_path") or ""))
