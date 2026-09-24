@@ -1,6 +1,6 @@
 <div align="center">
 
-# VMD + Multiwfn 绘图工作台
+# VMD_Multiwfn_Assistant
 
 面向 Windows 的 VMD 绘图与 Multiwfn 批处理桌面工具
 
@@ -30,7 +30,7 @@
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/super3-moon/new_v/releases/latest) 下载最新版 `VMD_Multiwfn_StyleGenerator.exe`。
+1. 从 [Releases](https://github.com/super3-moon/new_v/releases/latest) 下载最新版 `VMD_Multiwfn_Assistant.exe`。
 2. 从 [Multiwfn 官网](http://sobereva.com/multiwfn/) 和 [VMD 官网](https://www.ks.uiuc.edu/Research/vmd/) 下载并安装程序，准备好 `Multiwfn.exe` 与 `vmd.exe`。
 3. 启动程序，在左侧设置或自动扫描软件路径。
 4. 根据任务进入“绘图方案”“全自动流程”“自定义”或“批量 Multiwfn”。

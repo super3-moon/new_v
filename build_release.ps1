@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $releaseRoot = Join-Path $root "release"
 $workPath = Join-Path $root "_pkg_work"
-$specFile = Join-Path $root "VMD_Multiwfn_StyleGenerator.spec"
+$specFile = Join-Path $root "VMD_Multiwfn_Assistant.spec"
 $entry = Join-Path $root "vmd_style_tool_qt6.py"
 $styleDir = Join-Path $root "vmd_cube_styles"
 $customJson = Join-Path $root "vmd_custom_styles.default.json"
@@ -69,7 +69,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
-$exePath = Join-Path $distPath "VMD_Multiwfn_StyleGenerator.exe"
+$exePath = Join-Path $distPath "VMD_Multiwfn_Assistant.exe"
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Release EXE not found: $exePath"
 }

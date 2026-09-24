@@ -2986,7 +2986,7 @@ INDEX_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VMD 风格脚本生成器</title>
+  <title>VMD_Multiwfn_Assistant</title>
   <style>
     :root {
       --bg: #f5f7fb;
@@ -3155,7 +3155,7 @@ INDEX_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="hero">
-    <h1>VMD + Multiwfn 风格脚本生成器</h1>
+    <h1>VMD_Multiwfn_Assistant</h1>
     <p>按图片选择风格，自动生成对应名称的 CMD 脚本。</p>
   </div>
 

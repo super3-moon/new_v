@@ -690,7 +690,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         install_wheel_navigation_guard()
-        self.setWindowTitle("VMD + Multiwfn 绘图工作台")
+        self.setWindowTitle("VMD_Multiwfn_Assistant")
         self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
         screen = QApplication.primaryScreen()
         if screen is None:
@@ -804,9 +804,9 @@ class MainWindow(QMainWindow):
         brand_l.addWidget(brand_mark)
         brand_text = QVBoxLayout()
         brand_text.setSpacing(0)
-        brand_title = QLabel("Molecular Studio")
+        brand_title = QLabel("VMD_Multiwfn_Assistant")
         brand_title.setObjectName("brandTitle")
-        brand_subtitle = QLabel("VMD · Multiwfn 工作台")
+        brand_subtitle = QLabel("VMD · Multiwfn 自动化助手")
         brand_subtitle.setObjectName("brandSubtitle")
         brand_text.addWidget(brand_title)
         brand_text.addWidget(brand_subtitle)
@@ -1597,7 +1597,7 @@ class MainWindow(QMainWindow):
                 font-size: 14px;
                 font-weight: 800;
             }
-            QLabel#brandTitle { color: #ffffff; font-size: 15px; font-weight: 800; }
+            QLabel#brandTitle { color: #ffffff; font-size: 12px; font-weight: 800; }
             QLabel#brandSubtitle { color: #b8c8dc; font-size: 11px; }
             QPushButton#themeButton {
                 min-height: 26px;
