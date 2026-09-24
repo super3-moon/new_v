@@ -13,13 +13,15 @@ used_style_assets = {
     '06_turbo_colorscale_edgyglass.jpg',
     '07_glossy_default.jpg',
     '08_vmdrender_soft_material.jpg',
-    '10_tachyon_mediumshade_vmd.jpg',
     '13_bbs_goodsell_example.jpg',
     '14_bbs_edgy_example1.jpg',
     '18_sob449_1.jpg',
     '19_sob449_2.jpg',
-    '23_bright_blue_yellow.png',
-    '24_modern_cool_palette.png',
+    '25_bright_blue_yellow_porphyrin.png',
+    '26_modern_cool_palette_porphyrin.png',
+    '27_goodsell_pastel_porphyrin.png',
+    '28_edgy_contrast_porphyrin.png',
+    '29_translucent_clean_porphyrin.png',
     'esp_e7_wireframe_reference.png',
 }
 style_data = [
