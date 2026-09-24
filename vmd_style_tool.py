@@ -146,7 +146,7 @@ ORIGINAL_SURFACE_STYLES = [
         "pos_color": 12,
         "neg_color": 22,
         "rep0_commands": [
-            "mol modstyle 0 top CPK 0.450000 0.160000 22.000000 22.000000",
+            "mol modstyle 0 top CPK 0.700000 0.250000 22.000000 22.000000",
             "mol modcolor 0 top Name",
             "mol modmaterial 0 top Opaque",
         ],
@@ -186,6 +186,8 @@ ORIGINAL_SURFACE_STYLES = [
         ],
         "commands": BASE_VIEW + [
             "color Display Background white",
+            "color Name C gray",
+            "color change rgb gray 0.120000 0.130000 0.160000",
             "color change rgb 13 0.300000 0.280000 0.540000",
             "color change rgb 24 0.650000 0.680000 0.730000",
             "display projection Orthographic",
@@ -201,7 +203,7 @@ ORIGINAL_SURFACE_STYLES = [
             "material change transmode Glossy 0.000000",
         ],
         "sources": ["user-upload:param-pack"],
-        "notes": "Soft purple/cool-gray surface with a fine element-colored ball-and-stick skeleton.",
+        "notes": "Soft purple/cool-gray surface with a fine dark-carbon ball-and-stick skeleton while retaining other element colors.",
     },
     {
         "id": "translucent_clean_447",
