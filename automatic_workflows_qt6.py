@@ -283,11 +283,13 @@ class AutomationStyleDialog(QDialog):
         parent: QWidget | None = None,
         *,
         surface_mode: str = "volume_mapped",
+        skeleton_only: bool = False,
     ) -> None:
         super().__init__(parent)
         current = current or {}
+        self.skeleton_only = bool(skeleton_only)
         self.surface_mode = "signed" if surface_mode == "signed" else "volume_mapped"
-        self.setWindowTitle("选择绘图方案")
+        self.setWindowTitle("选择骨架样式" if self.skeleton_only else "选择绘图方案")
         self.setModal(True)
         self.resize(980, 700)
         self.setMinimumSize(760, 560)
@@ -300,7 +302,7 @@ class AutomationStyleDialog(QDialog):
         self.style_map = {str(style.get("id") or ""): style for style in self.styles}
         self.skeletons = [copy.deepcopy(style) for style in core.SKELETON_STYLES]
         self.skeleton_map = {str(style.get("id") or ""): style for style in self.skeletons}
-        self.mode = str(current.get("mode") or "bundle")
+        self.mode = "skeleton" if self.skeleton_only else str(current.get("mode") or "bundle")
         default_style_id = DEFAULT_STYLE_ID if self.surface_mode == "volume_mapped" else core.DEFAULT_STYLE_ID
         self.bundle_id = str(current.get("bundle_id") or default_style_id)
         self.iso_id = str(current.get("bundle_id") or current.get("iso_id") or default_style_id)
@@ -317,70 +319,94 @@ class AutomationStyleDialog(QDialog):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
         heading = QLabel(
-            "选择用于分子轨道的绘图方案"
-            if self.surface_mode == "signed"
-            else "选择用于表面静电势图的绘图方案"
+            "选择弱相互作用图中的分子骨架"
+            if self.skeleton_only
+            else (
+                "选择用于分子轨道的绘图方案"
+                if self.surface_mode == "signed"
+                else "选择用于表面静电势图的绘图方案"
+            )
         )
         heading.setObjectName("batchHeroTitle")
         root.addWidget(heading)
         hint = QLabel(
-            "这里只显示具有正、负相位配色的轨道等值面方案。它是进入 VMD 时的初始方案；确认前仍可在 VMD 中自由调整全部显示参数。"
-            if self.surface_mode == "signed"
-            else "这里只显示能够把 ESP 数据映射到电子密度表面的方案。科学等值面仍由自动化流程统一控制。"
+            "这里只改变分子骨架；IRI、RDG/NCI 或 IGMH 的等值面、着色范围和科学含义保持不变。"
+            if self.skeleton_only
+            else (
+                "这里只显示具有正、负相位配色的轨道等值面方案。它是进入 VMD 时的初始方案；确认前仍可在 VMD 中自由调整全部显示参数。"
+                if self.surface_mode == "signed"
+                else "这里只显示能够把 ESP 数据映射到电子密度表面的方案。科学等值面仍由自动化流程统一控制。"
+            )
         )
         hint.setObjectName("batchHint")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        root.addWidget(self.tabs, 1)
+        if self.skeleton_only:
+            skeleton_card = QFrame()
+            skeleton_card.setObjectName("batchCard")
+            skeleton_layout = QVBoxLayout(skeleton_card)
+            skeleton_layout.setContentsMargins(8, 10, 8, 8)
+            self.skeleton_list = _StyleChoiceList(
+                self.skeletons, self.skeleton_id
+            )
+            self.skeleton_list.selectionChanged.connect(self._on_skeleton_changed)
+            skeleton_layout.addWidget(self.skeleton_list, 1)
+            root.addWidget(skeleton_card, 1)
+        else:
+            self.tabs = QTabWidget()
+            self.tabs.setObjectName("automationStyleTabs")
+            self.tabs.setDocumentMode(True)
+            root.addWidget(self.tabs, 1)
 
-        self.bundle_list = _StyleChoiceList(self.styles, self.bundle_id)
-        self.bundle_list.selectionChanged.connect(self._on_bundle_changed)
-        self.tabs.addTab(self.bundle_list, "套装模式")
+            self.bundle_list = _StyleChoiceList(self.styles, self.bundle_id)
+            self.bundle_list.selectionChanged.connect(self._on_bundle_changed)
+            self.tabs.addTab(self.bundle_list, "套装模式")
 
-        split_page = QWidget()
-        split_layout = QHBoxLayout(split_page)
-        split_layout.setContentsMargins(8, 10, 8, 8)
-        split_layout.setSpacing(12)
-        skeleton_card = QFrame()
-        skeleton_card.setObjectName("batchCard")
-        skeleton_layout = QVBoxLayout(skeleton_card)
-        skeleton_title = QLabel("骨架样式")
-        skeleton_title.setObjectName("paneTitle")
-        skeleton_layout.addWidget(skeleton_title)
-        self.skeleton_list = _StyleChoiceList(self.skeletons, self.skeleton_id, compact=True)
-        self.skeleton_list.selectionChanged.connect(self._on_skeleton_changed)
-        skeleton_layout.addWidget(self.skeleton_list, 1)
-        split_layout.addWidget(skeleton_card, 1)
+            split_page = QWidget()
+            split_layout = QHBoxLayout(split_page)
+            split_layout.setContentsMargins(8, 10, 8, 8)
+            split_layout.setSpacing(12)
+            skeleton_card = QFrame()
+            skeleton_card.setObjectName("batchCard")
+            skeleton_layout = QVBoxLayout(skeleton_card)
+            skeleton_title = QLabel("骨架样式")
+            skeleton_title.setObjectName("paneTitle")
+            skeleton_layout.addWidget(skeleton_title)
+            self.skeleton_list = _StyleChoiceList(self.skeletons, self.skeleton_id, compact=True)
+            self.skeleton_list.selectionChanged.connect(self._on_skeleton_changed)
+            skeleton_layout.addWidget(self.skeleton_list, 1)
+            split_layout.addWidget(skeleton_card, 1)
 
-        iso_card = QFrame()
-        iso_card.setObjectName("batchCard")
-        iso_layout = QVBoxLayout(iso_card)
-        iso_title = QLabel("等值面样式")
-        iso_title.setObjectName("paneTitle")
-        iso_layout.addWidget(iso_title)
-        self.iso_list = _StyleChoiceList(self.styles, self.iso_id, compact=True)
-        self.iso_list.selectionChanged.connect(self._on_iso_changed)
-        iso_layout.addWidget(self.iso_list, 1)
-        split_layout.addWidget(iso_card, 1)
-        self.tabs.addTab(split_page, "拆分模式")
-        self.tabs.setCurrentIndex(1 if self.mode == "split" else 0)
-        self.tabs.currentChanged.connect(self._on_mode_changed)
+            iso_card = QFrame()
+            iso_card.setObjectName("batchCard")
+            iso_layout = QVBoxLayout(iso_card)
+            iso_title = QLabel("等值面样式")
+            iso_title.setObjectName("paneTitle")
+            iso_layout.addWidget(iso_title)
+            self.iso_list = _StyleChoiceList(self.styles, self.iso_id, compact=True)
+            self.iso_list.selectionChanged.connect(self._on_iso_changed)
+            iso_layout.addWidget(self.iso_list, 1)
+            split_layout.addWidget(iso_card, 1)
+            self.tabs.addTab(split_page, "拆分模式")
+            self.tabs.setCurrentIndex(1 if self.mode == "split" else 0)
+            self.tabs.currentChanged.connect(self._on_mode_changed)
 
         footer = QHBoxLayout()
         self.selection_label = QLabel()
         self.selection_label.setObjectName("detailLabel")
         self.selection_label.setWordWrap(True)
         footer.addWidget(self.selection_label, 1)
-        parameters = QPushButton("查看方案参数")
-        parameters.clicked.connect(self._show_parameters)
-        footer.addWidget(parameters)
+        if not self.skeleton_only:
+            parameters = QPushButton("查看方案参数")
+            parameters.clicked.connect(self._show_parameters)
+            footer.addWidget(parameters)
         cancel = QPushButton("取消")
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
-        apply_button = QPushButton("应用到此自动化流程")
+        apply_button = QPushButton(
+            "应用骨架" if self.skeleton_only else "应用到此自动化流程"
+        )
         apply_button.setObjectName("primaryBtn")
         apply_button.clicked.connect(self._accept_selection)
         footer.addWidget(apply_button)
@@ -404,6 +430,12 @@ class AutomationStyleDialog(QDialog):
         self._sync_summary()
 
     def _selection_parts(self) -> tuple[dict, list[str] | None, str]:
+        if self.skeleton_only:
+            skeleton = self.skeleton_map.get(self.skeleton_id)
+            if skeleton is None:
+                raise ValueError("请选择一个骨架样式。")
+            rep0 = list(skeleton.get("rep0_commands") or [])
+            return copy.deepcopy(skeleton), rep0, f"骨架：{skeleton.get('name')}"
         if self.mode == "split":
             skeleton = self.skeleton_map.get(self.skeleton_id)
             iso_style = self.style_map.get(self.iso_id)
@@ -426,7 +458,11 @@ class AutomationStyleDialog(QDialog):
         except ValueError as exc:
             self.selection_label.setText(str(exc))
             return
-        self.selection_label.setText(f"{selection_text}\n{_style_summary(style)}")
+        self.selection_label.setText(
+            selection_text
+            if self.skeleton_only
+            else f"{selection_text}\n{_style_summary(style)}"
+        )
 
     def _show_parameters(self) -> None:
         try:
@@ -446,6 +482,16 @@ class AutomationStyleDialog(QDialog):
 
     def selection(self) -> dict:
         style, rep0, selection_text = self._selection_parts()
+        if self.skeleton_only:
+            payload = {
+                "skeleton": copy.deepcopy(style),
+                "rep0_commands": list(rep0 or []),
+                "selection_text": selection_text,
+                "mode": "skeleton",
+                "skeleton_id": self.skeleton_id,
+            }
+            payload["hash"] = _snapshot_hash(payload)
+            return payload
         payload = {
             "style": copy.deepcopy(style),
             "rep0_commands": list(rep0 or []),

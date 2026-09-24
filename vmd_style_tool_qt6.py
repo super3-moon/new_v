@@ -1753,6 +1753,31 @@ class MainWindow(QMainWindow):
                 background: #edf4ff;
                 color: #164f9e;
             }
+            QTabWidget#automationStyleTabs::pane {
+                border: 1px solid #c9d8e8;
+                border-radius: 10px;
+                background: #ffffff;
+                top: -1px;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab {
+                min-width: 112px;
+                min-height: 28px;
+                padding: 7px 18px;
+                color: #29445f;
+                background: #e8eef5;
+                border: 1px solid #c9d8e8;
+                border-bottom-color: #8ca8c5;
+                font-weight: 700;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab:hover:!selected {
+                color: #164f9e;
+                background: #dce9f8;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab:selected {
+                color: #ffffff;
+                background: #316fca;
+                border-color: #255da9;
+            }
             QPushButton#navButton {
                 min-height: 32px;
                 font-size: 12px;
@@ -2498,6 +2523,25 @@ class MainWindow(QMainWindow):
                 background: #203d5f;
                 border-color: #4f7fb5;
                 color: #e7f2ff;
+            }
+            QTabWidget#automationStyleTabs::pane {
+                border-color: #3a526b;
+                background: #142235;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab {
+                color: #c5d5e5;
+                background: #1b2c40;
+                border-color: #3a526b;
+                border-bottom-color: #56728e;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab:hover:!selected {
+                color: #ffffff;
+                background: #27405b;
+            }
+            QTabWidget#automationStyleTabs QTabBar::tab:selected {
+                color: #ffffff;
+                background: #316fca;
+                border-color: #4b86d8;
             }
             QPushButton#navButton:checked {
                 background: #316fca;

@@ -215,6 +215,7 @@ def build_weak_interaction_scene_tcl(
     method: str,
     surface_cube: Path | str,
     color_cube: Path | str,
+    skeleton_style: Mapping[str, object] | None = None,
 ) -> str:
     """Build the initial VMD scene from Multiwfn's method-specific scripts.
 
@@ -232,6 +233,19 @@ def build_weak_interaction_scene_tcl(
     maximum = float(profile["color_max"])
     midpoint = float(profile["color_midpoint"])
     skeleton = float(profile["skeleton_scale"])
+    skeleton_pre_commands: list[str] = []
+    skeleton_rep_commands: list[str] = []
+    if isinstance(skeleton_style, Mapping):
+        skeleton_pre_commands = [
+            str(command)
+            for command in skeleton_style.get("pre_commands", [])
+            if str(command).strip()
+        ]
+        skeleton_rep_commands = [
+            str(command)
+            for command in skeleton_style.get("rep0_commands", [])
+            if str(command).strip()
+        ]
     lines = [
         f"set MO_COLOR_CUBE {_tcl_utf8_path(color)}",
         f"set MO_SURFACE_CUBE {_tcl_utf8_path(surface)}",
@@ -240,11 +254,20 @@ def build_weak_interaction_scene_tcl(
         "mol new $MO_COLOR_CUBE type cube waitfor all",
         "mol addfile $MO_SURFACE_CUBE type cube waitfor all",
         "set MO_MOL [molinfo top]",
-        "mol delrep 0 $MO_MOL",
-        f"mol representation CPK {skeleton:.6f} 0.300000 18.000000 16.000000",
-        "mol color Element",
-        "mol material Opaque",
-        "mol addrep $MO_MOL",
+    ]
+    if skeleton_rep_commands:
+        lines.extend(skeleton_pre_commands)
+        lines.extend(skeleton_rep_commands)
+    else:
+        lines.extend(
+            [
+                f"mol modstyle 0 $MO_MOL CPK {skeleton:.6f} 0.300000 18.000000 16.000000",
+                "mol modcolor 0 $MO_MOL Element",
+                "mol modmaterial 0 $MO_MOL Opaque",
+            ]
+        )
+    lines.extend(
+        [
         f"mol representation Isosurface {iso:.8g} 1 0 0 1 1",
         "mol color Volume 0",
         "mol material Opaque",
@@ -257,8 +280,9 @@ def build_weak_interaction_scene_tcl(
         "display depthcue off",
         "display rendermode GLSL",
         "light 3 on",
-    ]
-    if method == "iri":
+        ]
+    )
+    if method == "iri" and not skeleton_rep_commands:
         lines.extend(["color Element N iceblue", "mol modcolor 0 $MO_MOL Element"])
     if method == "igmh":
         lines.append("material change specular Opaque 0.300000")
@@ -622,6 +646,45 @@ def build_multiwfn_sequence(
     raise ScientificWorkflowValidationError(f"未知的自动化流程：{workflow_id}")
 
 
+def build_rdg_interfragment_screen_sequence(
+    fragments: str,
+    output_cube: Path | str,
+    *,
+    vdw_scale: float = 1.8,
+) -> str:
+    """Build the Multiwfn 13 -> 14 sequence from manual section 4.13.4.2.
+
+    The operation keeps the RDG grid only in the overlap of the scaled van der
+    Waals regions of two fragments.  The sign(lambda2)rho color grid is left
+    untouched, exactly as in the manual's NCI-isosurface screening procedure.
+    """
+    fragment_list = [value.strip() for value in str(fragments).split(";") if value.strip()]
+    if len(fragment_list) != 2:
+        raise ScientificWorkflowValidationError(
+            "去除分子内 RDG 等值面需要恰好两个片段；请用分号分隔，例如 1-12;13-25。"
+        )
+    scale = float(vdw_scale)
+    if not 0.1 <= scale <= 10.0:
+        raise ScientificWorkflowValidationError("片段重叠范围倍率应在 0.1 到 10.0 之间。")
+    target = Path(output_cube).expanduser().resolve()
+    return "\n".join(
+        [
+            "13",
+            "14",
+            format(scale, ".8g"),
+            "1000",
+            "2",
+            fragment_list[0],
+            fragment_list[1],
+            "0",
+            str(target),
+            "-1",
+            "q",
+            "",
+        ]
+    )
+
+
 def _expected_products(
     workflow_id: str,
     method: str,
@@ -727,11 +790,16 @@ class ScientificWorkflowRunner:
         snapshot = self.options.get("style_snapshot")
         if self.workflow_id == WORKFLOW_WEAK:
             # Weak-interaction maps use method-specific scientific fields and
-            # parameters from Multiwfn's bundled VMD scripts. They are not an
-            # ESP-style surface and therefore deliberately bypass the shared
-            # drawing-style library.
+            # parameters from Multiwfn's bundled VMD scripts. Only the
+            # molecular skeleton may be selected from the shared style
+            # library; the scientific isosurface remains method-specific.
             weak_interaction_display_profile(self.method)
-            self.style_snapshot = {}
+            if isinstance(snapshot, Mapping) and isinstance(
+                snapshot.get("skeleton"), Mapping
+            ):
+                self.style_snapshot = copy.deepcopy(dict(snapshot))
+            else:
+                self.style_snapshot = {}
         else:
             if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("style"), Mapping):
                 raise ScientificWorkflowValidationError("请选择兼容的绘图方案。")
@@ -1082,8 +1150,14 @@ class ScientificWorkflowRunner:
         work: Path,
         log_dir: Path,
     ) -> tuple[orbital_vmd.VmdViewState, Path]:
+        skeleton_style = self.style_snapshot.get("skeleton")
         initial_scene = build_weak_interaction_scene_tcl(
-            self.method, surface_cube, color_cube
+            self.method,
+            surface_cube,
+            color_cube,
+            skeleton_style=(
+                skeleton_style if isinstance(skeleton_style, Mapping) else None
+            ),
         )
         return self._capture_interactive_view(
             color_cube,
@@ -1356,6 +1430,31 @@ class ScientificWorkflowRunner:
                     if not path.is_file() or path.stat().st_size <= 64:
                         raise ScientificWorkflowError(f"Multiwfn 未生成预期文件：{name}")
                     cubes[name] = path
+            if (
+                self.workflow_id == WORKFLOW_WEAK
+                and self.method == "rdg"
+                and bool(self.options.get("rdg_interfragment_only", False))
+            ):
+                self._emit(67, "正在去除两个片段内部及无关区域的 RDG 等值面")
+                screened_rdg = work / "func2_interfragment.cub"
+                screen_sequence = build_rdg_interfragment_screen_sequence(
+                    str(self.options.get("fragments") or ""),
+                    screened_rdg,
+                    vdw_scale=float(self.options.get("rdg_overlap_scale") or 1.8),
+                )
+                self._run_multiwfn(
+                    cubes["func2.cub"],
+                    screen_sequence,
+                    work,
+                    log_dir / "multiwfn_rdg_interfragment_screen.log",
+                    base_progress=65.0,
+                    progress_span=4.0,
+                )
+                if not screened_rdg.is_file() or screened_rdg.stat().st_size <= 64:
+                    raise ScientificWorkflowError(
+                        "Multiwfn 未生成去除分子内干扰后的 RDG Cube。"
+                    )
+                cubes["func2.cub"] = screened_rdg
             scatter_image: Path | None = None
             scatter_data: list[str] = []
             if (

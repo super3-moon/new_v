@@ -195,6 +195,15 @@ class ScientificWorkflowPage(QWidget):
             "只计算两个或多个片段表面的重叠区域；适用于绘制片段间 δg 等值面。"
         )
         method_layout.addWidget(self.igmh_prescreen_check)
+        self.rdg_interfragment_check = QCheckBox(
+            "仅保留两个片段之间的 RDG 等值面（去除分子内干扰）"
+        )
+        self.rdg_interfragment_check.setChecked(False)
+        self.rdg_interfragment_check.setToolTip(
+            "按 Multiwfn 手册 4.13.4.2，仅保留两个片段缩放范德华区域的重叠部分。"
+        )
+        self.rdg_interfragment_check.toggled.connect(self._sync_method_options)
+        method_layout.addWidget(self.rdg_interfragment_check)
         layout.addWidget(method_card)
 
         input_card, input_layout = self._card(
@@ -273,6 +282,19 @@ class ScientificWorkflowPage(QWidget):
         settings_form.addRow("IGMH 片段", self.fragments_edit)
         self.fragments_label = settings_form.labelForField(self.fragments_edit)
 
+        self.rdg_overlap_scale = QDoubleSpinBox()
+        self.rdg_overlap_scale.setDecimals(2)
+        self.rdg_overlap_scale.setRange(0.1, 10.0)
+        self.rdg_overlap_scale.setSingleStep(0.1)
+        self.rdg_overlap_scale.setValue(1.8)
+        self.rdg_overlap_scale.setToolTip(
+            "范德华半径的缩放倍率；Multiwfn 手册示例使用 1.8，可按体系调整。"
+        )
+        settings_form.addRow("片段重叠范围", self.rdg_overlap_scale)
+        self.rdg_overlap_scale_label = settings_form.labelForField(
+            self.rdg_overlap_scale
+        )
+
         self.iso_spin = QDoubleSpinBox()
         self.iso_spin.setDecimals(5)
         self.iso_spin.setRange(0.00001, 1.0)
@@ -286,14 +308,15 @@ class ScientificWorkflowPage(QWidget):
         self.style_row_widget = QWidget()
         style_row = QHBoxLayout(self.style_row_widget)
         style_row.setContentsMargins(0, 0, 0, 0)
-        style_row.addWidget(QLabel("绘图方案"))
+        self.style_field_label = QLabel("绘图方案")
+        style_row.addWidget(self.style_field_label)
         self.style_label = QLabel("尚未选择")
         self.style_label.setObjectName("detailLabel")
         self.style_label.setWordWrap(True)
         style_row.addWidget(self.style_label, 1)
-        choose_style = QPushButton("选择绘图方案")
-        choose_style.clicked.connect(self._choose_style)
-        style_row.addWidget(choose_style)
+        self.choose_style_button = QPushButton("选择绘图方案")
+        self.choose_style_button.clicked.connect(self._choose_style)
+        style_row.addWidget(self.choose_style_button)
         settings_layout.addWidget(self.style_row_widget)
 
         self.weak_display_label = QLabel()
@@ -366,6 +389,7 @@ class ScientificWorkflowPage(QWidget):
         if self.spec.id == science.WORKFLOW_WEAK:
             self.weak_scatter_check.setChecked(False)
             self.igmh_prescreen_check.setChecked(True)
+            self.rdg_interfragment_check.setChecked(False)
         self.toolbar_title.setText(self.spec.name)
         self.method_combo.blockSignals(True)
         self.method_combo.clear()
@@ -393,7 +417,13 @@ class ScientificWorkflowPage(QWidget):
             self.style_snapshot = {}
         elif str(self.style_snapshot.get("style", {}).get("surface_mode") or "") != self.spec.surface_mode:
             self.style_snapshot = self._default_style_snapshot()
-        self.style_row_widget.setVisible(self.spec.id != science.WORKFLOW_WEAK)
+        self.style_row_widget.setVisible(True)
+        self.style_field_label.setText(
+            "骨架样式" if self.spec.id == science.WORKFLOW_WEAK else "绘图方案"
+        )
+        self.choose_style_button.setText(
+            "选择骨架" if self.spec.id == science.WORKFLOW_WEAK else "选择绘图方案"
+        )
         self.weak_display_label.setVisible(self.spec.id == science.WORKFLOW_WEAK)
         self._sync_style_label()
         self._sync_method_options()
@@ -426,6 +456,7 @@ class ScientificWorkflowPage(QWidget):
         self.weak_scatter_check.setVisible(is_weak)
         self._sync_weak_scatter_path()
         self.igmh_prescreen_check.setVisible(is_weak and method == "igmh")
+        self.rdg_interfragment_check.setVisible(is_weak and method == "rdg")
         self.state_spin.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
         self.state_label.setVisible(self.spec.id == science.WORKFLOW_EXCITED)
         self.nto_pairs_spin.setVisible(
@@ -434,12 +465,23 @@ class ScientificWorkflowPage(QWidget):
         self.nto_pairs_label.setVisible(
             self.spec.id == science.WORKFLOW_EXCITED and method == "nto"
         )
-        self.fragments_edit.setVisible(
-            self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
+        show_fragments = is_weak and (
+            method == "igmh"
+            or (method == "rdg" and self.rdg_interfragment_check.isChecked())
         )
-        self.fragments_label.setVisible(
-            self.spec.id == science.WORKFLOW_WEAK and method == "igmh"
+        self.fragments_edit.setVisible(show_fragments)
+        self.fragments_label.setVisible(show_fragments)
+        if show_fragments:
+            self.fragments_label.setText(
+                "IGMH 片段" if method == "igmh" else "两个片段"
+            )
+        show_rdg_overlap = (
+            is_weak
+            and method == "rdg"
+            and self.rdg_interfragment_check.isChecked()
         )
+        self.rdg_overlap_scale.setVisible(show_rdg_overlap)
+        self.rdg_overlap_scale_label.setVisible(show_rdg_overlap)
         show_references = (
             self.spec.id == science.WORKFLOW_DEFORMATION
             and method == "fragment_difference"
@@ -465,7 +507,7 @@ class ScientificWorkflowPage(QWidget):
             ),
             "rdg": (
                 "经典 NCI/RDG 分析，对网格质量较敏感；生成 RDG 与 sign(λ₂)ρ 网格，"
-                "随后可在 VMD 中自由调整。"
+                "随后可在 VMD 中自由调整。若只研究两个片段之间的作用，可按手册方法去除分子内等值面。"
             ),
             "igmh": (
                 "适合划分片段后专门分析片段间相互作用。"
@@ -562,12 +604,16 @@ class ScientificWorkflowPage(QWidget):
             self.style_snapshot,
             self,
             surface_mode=self.spec.surface_mode,
+            skeleton_only=self.spec.id == science.WORKFLOW_WEAK,
         )
         if dialog.exec():
             self.style_snapshot = dialog.selection()
             self._sync_style_label()
 
     def _sync_style_label(self) -> None:
+        if self.spec.id == science.WORKFLOW_WEAK and not self.style_snapshot:
+            self.style_label.setText("Multiwfn 推荐骨架（随分析方法）")
+            return
         self.style_label.setText(
             str(self.style_snapshot.get("selection_text") or "尚未选择兼容的绘图方案")
         )
@@ -586,6 +632,25 @@ class ScientificWorkflowPage(QWidget):
                 "请先选择 Gnuplot 安装目录 bin 文件夹中的 gnuplot.exe。",
             )
             return
+        if (
+            self.spec.id == science.WORKFLOW_WEAK
+            and str(self.method_combo.currentData() or "") == "rdg"
+            and self.rdg_interfragment_check.isChecked()
+            and len(
+                [
+                    part
+                    for part in self.fragments_edit.text().split(";")
+                    if part.strip()
+                ]
+            )
+            != 2
+        ):
+            QMessageBox.warning(
+                self,
+                "需要两个片段",
+                "请用分号填写恰好两个片段，例如：1-12;13-25。",
+            )
+            return
         inputs = {role: editor.text().strip() for role, (_label, editor, _button) in self.role_rows.items()}
         output = self.output_edit.text().strip()
         options = {
@@ -596,6 +661,8 @@ class ScientificWorkflowPage(QWidget):
             "draw_scatter": self.weak_scatter_check.isChecked(),
             "gnuplot_path": self.gnuplot_edit.text().strip(),
             "igmh_prescreen": self.igmh_prescreen_check.isChecked(),
+            "rdg_interfragment_only": self.rdg_interfragment_check.isChecked(),
+            "rdg_overlap_scale": self.rdg_overlap_scale.value(),
             "reference_files": self._reference_file_paths(),
             "iso_value": self.iso_spin.value(),
             "keep_cubes": self.keep_cubes.isChecked(),
