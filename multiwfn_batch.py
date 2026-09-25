@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
+import batch_cube_vmd
+
 
 PRESET_SCHEMA_VERSION = 1
 MANIFEST_SCHEMA_VERSION = 1
@@ -368,6 +370,7 @@ class BatchPlan:
     preset: BatchPreset
     variables: dict[str, str]
     jobs: list[BatchJob]
+    vmd_settings: dict[str, object] = field(default_factory=dict)
     status: str = STATUS_PENDING
     detected_multiwfn_version: str = ""
 
@@ -389,6 +392,7 @@ class BatchPlan:
             "status": self.status,
             "preset": self.preset.to_dict(),
             "variables": dict(self.variables),
+            "vmd_settings": dict(self.vmd_settings),
             "detected_multiwfn_version": self.detected_multiwfn_version,
             "jobs": [job.to_dict() for job in self.jobs],
         }
@@ -401,6 +405,7 @@ def create_batch_plan(
     variables: dict[str, object] | None = None,
     *,
     prefix: str = "batch",
+    vmd_settings: dict[str, object] | None = None,
 ) -> BatchPlan:
     preset.validate()
     allowed = set(preset.input_extensions)
@@ -457,6 +462,7 @@ def create_batch_plan(
         preset=preset,
         variables=resolved_variables,
         jobs=jobs,
+        vmd_settings=batch_cube_vmd.normalize_settings(vmd_settings),
     )
 
 
@@ -499,16 +505,37 @@ class MultiwfnBatchRunner:
         self,
         plan: BatchPlan,
         multiwfn_exe: Path | str,
+        vmd_exe: Path | str | None = None,
         *,
         event_callback: EventCallback | None = None,
     ) -> None:
         self.plan = plan
         self.multiwfn_exe = Path(multiwfn_exe).expanduser().resolve()
+        self.vmd_exe = (
+            Path(vmd_exe).expanduser().resolve() if vmd_exe is not None else None
+        )
         self.event_callback = event_callback
         self._cancel_event = threading.Event()
+        self._cube_renderer: batch_cube_vmd.BatchCubeVmdRenderer | None = None
+        if bool(self.plan.vmd_settings.get("enabled", False)):
+            if self.vmd_exe is None or not self.vmd_exe.is_file():
+                raise BatchValidationError("VMD 自动绘图已开启，但 vmd.exe 路径无效。")
+            self._cube_renderer = batch_cube_vmd.BatchCubeVmdRenderer(
+                self.vmd_exe,
+                self.plan.run_dir,
+                self.plan.vmd_settings,
+                event_callback=self._forward_vmd_event,
+                cancel_event=self._cancel_event,
+            )
 
     def cancel(self) -> None:
         self._cancel_event.set()
+        if self._cube_renderer is not None:
+            self._cube_renderer.cancel()
+
+    def _forward_vmd_event(self, event: dict) -> None:
+        if self.event_callback is not None:
+            self.event_callback(dict(event))
 
     def _emit(self, kind: str, **payload: object) -> None:
         if self.event_callback is not None:
@@ -604,6 +631,11 @@ class MultiwfnBatchRunner:
             ),
             "cancelled": sum(job.status == STATUS_CANCELLED for job in self.plan.jobs),
             "total": len(self.plan.jobs),
+            "vmd_template": (
+                self._cube_renderer.template_payload()
+                if self._cube_renderer is not None
+                else {}
+            ),
         }
         self._emit("batch_finished", **summary)
         return summary
@@ -751,7 +783,17 @@ class MultiwfnBatchRunner:
                 job.status = STATUS_FAILED
                 job.error = "；".join(output_errors)
             else:
-                job.status = STATUS_SUCCESS
+                try:
+                    self._render_collected_cubes(job)
+                except batch_cube_vmd.BatchCubeVmdCancelled as exc:
+                    self._cancel_event.set()
+                    job.status = STATUS_CANCELLED
+                    job.error = str(exc)
+                except Exception as exc:
+                    job.status = STATUS_FAILED
+                    job.error = f"自动 VMD 绘图失败：{exc}"
+                else:
+                    job.status = STATUS_SUCCESS
 
         job.duration_seconds = time.monotonic() - started
         job.finished_at = datetime.now().isoformat(timespec="seconds")
@@ -773,6 +815,25 @@ class MultiwfnBatchRunner:
             duration=job.duration_seconds,
             outputs=list(job.outputs),
         )
+
+    def _render_collected_cubes(self, job: BatchJob) -> None:
+        if self._cube_renderer is None:
+            return
+        cubes = [
+            Path(output)
+            for output in job.outputs
+            if Path(output).suffix.casefold() == ".cub" and Path(output).is_file()
+        ]
+        if not cubes:
+            raise BatchValidationError(
+                "当前任务没有保留下来的 Cube；请检查 Cube 输出规则。"
+            )
+        images = self._cube_renderer.render_cubes(
+            cubes,
+            job_index=job.index,
+            input_name=job.input_path.name,
+        )
+        job.outputs.extend(str(path) for path in images)
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> None:

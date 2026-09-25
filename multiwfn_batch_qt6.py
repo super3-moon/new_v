@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -10,6 +11,8 @@ from typing import Callable
 import multiwfn_batch as batch
 import qt_feedback
 import user_feedback
+import vmd_style_tool as core
+from automatic_workflows_qt6 import AutomationStyleDialog
 from multiwfn_recorder_qt6 import MultiwfnRecorderDialog
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QDesktopServices
@@ -226,6 +229,8 @@ class BatchExecutionWorker(QObject):
         variables: dict[str, str],
         output_root: Path,
         multiwfn_exe: Path,
+        vmd_exe: Path | None,
+        vmd_settings: dict[str, object],
         prefix: str,
     ) -> None:
         super().__init__()
@@ -234,6 +239,8 @@ class BatchExecutionWorker(QObject):
         self.variables = variables
         self.output_root = output_root
         self.multiwfn_exe = multiwfn_exe
+        self.vmd_exe = vmd_exe
+        self.vmd_settings = copy.deepcopy(vmd_settings)
         self.prefix = prefix
         self.runner: batch.MultiwfnBatchRunner | None = None
         self.cancel_requested = False
@@ -247,9 +254,13 @@ class BatchExecutionWorker(QObject):
                 self.output_root,
                 self.variables,
                 prefix=self.prefix,
+                vmd_settings=self.vmd_settings,
             )
             self.runner = batch.MultiwfnBatchRunner(
-                plan, self.multiwfn_exe, event_callback=self.event.emit
+                plan,
+                self.multiwfn_exe,
+                self.vmd_exe,
+                event_callback=self.event.emit,
             )
             if self.cancel_requested:
                 self.runner.cancel()
@@ -273,11 +284,13 @@ class MultiwfnBatchPage(QWidget):
         self,
         storage_dir: Path,
         multiwfn_path_getter: Callable[[], str],
+        vmd_path_getter: Callable[[], str],
     ) -> None:
         super().__init__()
         self.storage_dir = Path(storage_dir)
         self.presets_file = self.storage_dir / "multiwfn_batch_presets.json"
         self.multiwfn_path_getter = multiwfn_path_getter
+        self.vmd_path_getter = vmd_path_getter
         self.files: list[Path] = []
         self.file_enabled: dict[str, bool] = {}
         self.presets: list[batch.BatchPreset] = []
@@ -293,9 +306,11 @@ class MultiwfnBatchPage(QWidget):
         self._loaded_summary_text = ""
         self._active_run_mode = ""
         self._trial_signature = ""
+        self._trial_vmd_template: dict[str, str] = {}
         self._continue_requires_retrial = False
         self._tab_animation: QPropertyAnimation | None = None
         self._progress_animation: QPropertyAnimation | None = None
+        self.vmd_style_snapshot = self._default_vmd_style_snapshot()
         self._build_ui()
         self._connect_editor_change_tracking()
         self._reload_presets()
@@ -645,6 +660,34 @@ class MultiwfnBatchPage(QWidget):
         common_grid.setColumnStretch(1, 1)
         output_layout.addLayout(common_grid)
 
+        self.auto_vmd_frame = QFrame()
+        self.auto_vmd_frame.setObjectName("batchAdvancedPanel")
+        auto_vmd_layout = QVBoxLayout(self.auto_vmd_frame)
+        auto_vmd_layout.setContentsMargins(12, 10, 12, 11)
+        auto_vmd_layout.setSpacing(7)
+        self.auto_vmd_check = QCheckBox("自动使用 VMD 绘制保留的 Cube")
+        self.auto_vmd_check.toggled.connect(self._on_auto_vmd_toggled)
+        auto_vmd_layout.addWidget(self.auto_vmd_check)
+        auto_vmd_layout.addWidget(
+            self._hint(
+                "首个 Cube 会按所选等值面样式打开 VMD；确认样式和角度后，"
+                "其余 Cube 自动复用全部参数并使用 Tachyon 保存 PNG。"
+            )
+        )
+        auto_vmd_row = QHBoxLayout()
+        auto_vmd_row.setSpacing(8)
+        self.vmd_style_label = QLabel()
+        self.vmd_style_label.setObjectName("detailLabel")
+        self.vmd_style_label.setWordWrap(True)
+        self.choose_vmd_style_button = QPushButton("选择等值面样式")
+        self.choose_vmd_style_button.clicked.connect(self._choose_vmd_style)
+        auto_vmd_row.addWidget(self.vmd_style_label, 1)
+        auto_vmd_row.addWidget(self.choose_vmd_style_button)
+        auto_vmd_layout.addLayout(auto_vmd_row)
+        self.auto_vmd_frame.setVisible(False)
+        output_layout.addWidget(self.auto_vmd_frame)
+        self._sync_vmd_style_label()
+
         self.manual_output_toggle = QCheckBox("补充手动匹配规则（高级）")
         self.manual_output_toggle.toggled.connect(
             lambda visible: self.manual_output_container.setVisible(bool(visible))
@@ -933,6 +976,14 @@ class MultiwfnBatchPage(QWidget):
         index = self.preset_combo.findData(wanted)
         if index >= 0:
             self.preset_combo.setCurrentIndex(index)
+        saved_vmd = config.get("batch_cube_vmd_settings")
+        if isinstance(saved_vmd, dict):
+            snapshot = saved_vmd.get("style_snapshot")
+            if isinstance(snapshot, dict) and isinstance(snapshot.get("style"), dict):
+                self.vmd_style_snapshot = copy.deepcopy(snapshot)
+            self.auto_vmd_check.setChecked(bool(saved_vmd.get("enabled", False)))
+        self._sync_vmd_style_label()
+        self._sync_auto_vmd_availability()
 
     def is_running(self) -> bool:
         return self.thread is not None and self.thread.isRunning()
@@ -967,6 +1018,7 @@ class MultiwfnBatchPage(QWidget):
                 "preset": preset.to_dict(),
                 "files": [self._file_key(path) for path in self._enabled_files()],
                 "output": self.output_dir_edit.text().strip(),
+                "cube_vmd": self._current_vmd_settings(),
             }
         except Exception:
             return ""
@@ -978,6 +1030,7 @@ class MultiwfnBatchPage(QWidget):
         if self._trial_signature == self._configuration_signature():
             return
         self._continue_requires_retrial = True
+        self._trial_vmd_template = {}
         self.run_summary_label.setText("文件或流程设置已变化，请用当前设置重新试运行首个文件。")
         self._set_run_state("需要重新试运行", "warning")
         self.continue_batch_button.setText("重新试运行")
@@ -1390,6 +1443,85 @@ class MultiwfnBatchPage(QWidget):
         )
 
     @staticmethod
+    def _default_vmd_style_snapshot() -> dict:
+        styles = [
+            style
+            for style in core.get_all_bundle_styles()
+            if str(style.get("surface_mode") or "signed") == "signed"
+        ]
+        if not styles:
+            return {}
+        style = next(
+            (item for item in styles if item.get("id") == core.DEFAULT_STYLE_ID),
+            styles[0],
+        )
+        return {
+            "style": copy.deepcopy(style),
+            "rep0_commands": list(style.get("rep0_commands") or []),
+            "selection_text": f"套装风格：{style.get('name')}",
+            "mode": "bundle",
+            "bundle_id": str(style.get("id") or ""),
+            "iso_id": str(style.get("id") or ""),
+            "skeleton_id": "",
+        }
+
+    def _sync_vmd_style_label(self) -> None:
+        style = self.vmd_style_snapshot.get("style") or {}
+        selection = str(self.vmd_style_snapshot.get("selection_text") or "")
+        name = str(style.get("name") or "尚未选择")
+        self.vmd_style_label.setText(f"当前样式：{name}" + (f"\n{selection}" if selection else ""))
+
+    def _choose_vmd_style(self) -> None:
+        dialog = AutomationStyleDialog(
+            self.vmd_style_snapshot,
+            self,
+            surface_mode="signed",
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.vmd_style_snapshot = dialog.selection()
+        self._sync_vmd_style_label()
+        self._trial_vmd_template = {}
+        self._invalidate_trial_if_needed()
+        self._emit_vmd_settings()
+
+    def _on_auto_vmd_toggled(self, checked: bool) -> None:
+        self.choose_vmd_style_button.setEnabled(bool(checked))
+        self.vmd_style_label.setEnabled(bool(checked))
+        self._trial_vmd_template = {}
+        self._invalidate_trial_if_needed()
+        self._emit_vmd_settings()
+
+    def _emit_vmd_settings(self) -> None:
+        self.settingsChanged.emit(
+            {"batch_cube_vmd_settings": self._current_vmd_settings()}
+        )
+
+    def _current_vmd_settings(self) -> dict[str, object]:
+        return {
+            "enabled": bool(self.auto_vmd_check.isChecked()),
+            "style_snapshot": copy.deepcopy(self.vmd_style_snapshot),
+            "width": 1600,
+            "height": 1200,
+            "timeout_seconds": 600,
+        }
+
+    def _sync_auto_vmd_availability(self) -> None:
+        if not hasattr(self, "auto_vmd_frame"):
+            return
+        cube_check = self.common_output_checks.get("cube")
+        available = bool(cube_check is not None and cube_check.isChecked())
+        self.auto_vmd_frame.setVisible(available)
+        if not available and self.auto_vmd_check.isChecked():
+            self.auto_vmd_check.setChecked(False)
+        self.choose_vmd_style_button.setEnabled(
+            available and self.auto_vmd_check.isChecked()
+        )
+        self.vmd_style_label.setEnabled(
+            available and self.auto_vmd_check.isChecked()
+        )
+
+    @staticmethod
     def _pattern_belongs_to_group(pattern: str, group: dict) -> bool:
         normalized = str(pattern or "").strip().casefold()
         for wildcard in group["patterns"]:
@@ -1420,6 +1552,7 @@ class MultiwfnBatchPage(QWidget):
                 check.blockSignals(False)
         finally:
             self._syncing_common_outputs = False
+        self._sync_auto_vmd_availability()
 
     def _on_common_output_toggled(self, group_id: str, checked: bool) -> None:
         if self._syncing_common_outputs:
@@ -1802,7 +1935,9 @@ class MultiwfnBatchPage(QWidget):
             self.output_dir_edit.setText(path)
             self.settingsChanged.emit({"batch_output_dir": path})
 
-    def _validated_run_inputs(self) -> tuple[batch.BatchPreset, list[Path], Path, Path]:
+    def _validated_run_inputs(
+        self,
+    ) -> tuple[batch.BatchPreset, list[Path], Path, Path, Path | None, dict[str, object]]:
         preset = self._preset_from_editor(
             preset_id=self._editor_preset_id or "unsaved_draft"
         )
@@ -1817,12 +1952,30 @@ class MultiwfnBatchPage(QWidget):
         exe = Path(self.multiwfn_path_getter().strip()).expanduser()
         if not exe.is_file():
             raise batch.BatchValidationError("请先在左侧设置有效的 Multiwfn.exe 路径。")
-        return preset, files, output_root, exe.resolve()
+        vmd_settings = self._current_vmd_settings()
+        vmd_exe: Path | None = None
+        if bool(vmd_settings.get("enabled", False)):
+            if not self.common_output_checks["cube"].isChecked():
+                raise batch.BatchValidationError(
+                    "开启自动 VMD 绘图前，请先勾选保留 Cube 格点文件。"
+                )
+            vmd_candidate = Path(self.vmd_path_getter().strip()).expanduser()
+            if not vmd_candidate.is_file():
+                raise batch.BatchValidationError("请先在左侧设置有效的 vmd.exe 路径。")
+            vmd_exe = vmd_candidate.resolve()
+        return preset, files, output_root, exe.resolve(), vmd_exe, vmd_settings
 
     def _preview_run(self) -> None:
         try:
-            preset, files, output_root, exe = self._validated_run_inputs()
-            plan = batch.create_batch_plan(files, preset, output_root, preset.variables, prefix="preview")
+            preset, files, output_root, exe, _vmd_exe, vmd_settings = self._validated_run_inputs()
+            plan = batch.create_batch_plan(
+                files,
+                preset,
+                output_root,
+                preset.variables,
+                prefix="preview",
+                vmd_settings=vmd_settings,
+            )
             preview = batch.render_job_preview(plan, plan.jobs[0], exe)
         except Exception as exc:
             qt_feedback.show_error(self, "预检失败", exc, stage="批量任务预检")
@@ -1860,13 +2013,19 @@ class MultiwfnBatchPage(QWidget):
         if self.is_running():
             return
         try:
-            preset, files, output_root, exe = self._validated_run_inputs()
+            preset, files, output_root, exe, vmd_exe, vmd_settings = self._validated_run_inputs()
         except Exception as exc:
             qt_feedback.show_error(self, "无法开始", exc, stage="检查批量任务设置")
             return
         if trial:
             files = files[:1]
             self._continue_requires_retrial = False
+        elif (
+            self._trial_vmd_template
+            and self._trial_signature
+            and self._trial_signature == self._configuration_signature()
+        ):
+            vmd_settings["template"] = dict(self._trial_vmd_template)
         self._active_run_mode = "trial" if trial else "batch"
         self.continue_batch_button.setVisible(False)
         self._populate_queue(files)
@@ -1897,6 +2056,8 @@ class MultiwfnBatchPage(QWidget):
             preset.variables,
             output_root,
             exe,
+            vmd_exe,
+            vmd_settings,
             "trial" if trial else "batch",
         )
         self.worker.moveToThread(self.thread)
@@ -1938,6 +2099,17 @@ class MultiwfnBatchPage(QWidget):
                     self._append_log(message)
         elif kind == "progress":
             self._set_progress_animated(int(event.get("completed") or 0))
+        elif kind in {
+            "vmd_interaction_required",
+            "vmd_template_saved",
+            "vmd_progress",
+        }:
+            index = int(event.get("index") or 0)
+            message = str(event.get("message") or "正在进行 VMD 绘图")
+            row = index - 1
+            if 0 <= row < self.queue_table.rowCount():
+                self.queue_table.setItem(row, 4, QTableWidgetItem(message))
+            self._append_log(message)
 
     @Slot(object, object)
     def _on_worker_finished(self, result: dict | None, error: str | None) -> None:
@@ -1979,6 +2151,12 @@ class MultiwfnBatchPage(QWidget):
             and cancelled_count == 0
             and int(result.get("success") or 0) > 0
         ):
+            template = result.get("vmd_template")
+            self._trial_vmd_template = (
+                {str(key): str(value) for key, value in template.items()}
+                if isinstance(template, dict)
+                else {}
+            )
             total = len(self._enabled_files())
             if total > 1:
                 self._trial_signature = self._configuration_signature()
@@ -1991,6 +2169,8 @@ class MultiwfnBatchPage(QWidget):
                 )
                 self.continue_batch_button.setVisible(True)
         else:
+            if completed_mode == "trial":
+                self._trial_vmd_template = {}
             self.continue_batch_button.setVisible(False)
         qt_feedback.show_toast(
             self,

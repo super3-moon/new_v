@@ -2043,6 +2043,7 @@ def build_multi_batch_render_tcl(
     native_state_path: Path | str | None = None,
     reference_cube_path: Path | str | None = None,
     restore_exact_color_slots: bool = False,
+    allow_geometry_mismatch: bool = False,
 ) -> str:
     """Build one VMD script that renders multiple orbital Cubes in sequence.
 
@@ -2081,7 +2082,10 @@ def build_multi_batch_render_tcl(
         output = Path(str(raw.get("output_path") or "")).expanduser().resolve()
         if not cube.is_file():
             raise OrbitalVmdValidationError(f"Orbital Cube does not exist: {cube}")
-        if cube_geometry_fingerprint(cube) != state.geometry_fingerprint:
+        if (
+            not allow_geometry_mismatch
+            and cube_geometry_fingerprint(cube) != state.geometry_fingerprint
+        ):
             raise OrbitalVmdValidationError(
                 "Orbital Cube geometry/grid does not match the captured reference."
             )

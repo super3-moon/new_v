@@ -2302,6 +2302,7 @@ def load_config() -> dict:
         "last_iso_style": DEFAULT_STYLE_ID if DEFAULT_STYLE_ID in STYLE_BY_ID else (STYLES[0]["id"] if STYLES else ""),
         "batch_output_dir": str(ROOT / "batch_runs"),
         "batch_last_preset": "builtin_export_xyz",
+        "batch_cube_vmd_settings": {},
         "automatic_output_dir": str(ROOT / "automatic_runs"),
         "automatic_workflow_settings": {},
         "scientific_workflow_settings": {},
@@ -2350,6 +2351,7 @@ def save_config(config: dict) -> None:
             "last_iso_style": value("last_iso_style", ""),
             "batch_output_dir": value("batch_output_dir", str(ROOT / "batch_runs")),
             "batch_last_preset": value("batch_last_preset", "builtin_export_xyz"),
+            "batch_cube_vmd_settings": value("batch_cube_vmd_settings", {}),
             "automatic_output_dir": value(
                 "automatic_output_dir", str(ROOT / "automatic_runs")
             ),

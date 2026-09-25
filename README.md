@@ -24,7 +24,7 @@
 - **风格管理**：提供套装与骨架/等值面拆分模式，支持搜索、材质筛选、排序和参数调整。
 - **自定义风格**：可从 VMD Save State 导入，也可使用 DeepSeek V4.1 Flash（默认）、OpenAI 或 Gemini 辅助识别参考图风格。
 - **全自动流程**：内置 ESP、轨道能级图、IRI/RDG/IGMH、空穴-电子/NTO、自旋密度及电子密度差/变形密度；自动完成计算、校验、Tachyon 绘图与结果整理。
-- **批量 Multiwfn**：录制或导入命令序列，预检后批量执行，并汇总日志、结果和 CSV。
+- **批量 Multiwfn**：录制或导入命令序列，预检后批量执行，并汇总日志、结果和 CSV；保留 Cube 时可用首个文件统一校准 VMD 样式与视角并自动批量渲染。
 - **结果保护**：任务使用独立工作目录，避免固定文件名互相覆盖；渲染结果可保存到输入目录或指定目录。
 - **桌面体验**：支持深浅主题、响应式布局和常用快捷键。
 
@@ -105,7 +105,8 @@ python .\vmd_style_tool_qt6.py
 1. 添加输入文件或扫描文件夹。
 2. 选择内置流程，或录制、粘贴、导入自己的 Multiwfn 命令序列。
 3. 配置输出类型并运行“预检 / 预览”。
-4. 试运行通过后执行完整批次，在结果目录查看 `manifest.json`、`summary.csv`、日志和归档结果。
+4. 勾选保留 Cube 后，可开启“自动使用 VMD 绘制保留的 Cube”并选择正负等值面样式。首个 Cube 会打开 VMD 供自由调整；确认后，后续 Cube 复用同一完整场景与角度，由 Tachyon 自动保存 PNG。
+5. 试运行通过后执行完整批次；正式批次会复用试运行已确认的 VMD 参数，无需重复调整。在结果目录查看 `manifest.json`、`summary.csv`、日志和归档结果。
 
 ### 快捷键
 
@@ -133,6 +134,7 @@ orbital_diagram_renderer.py    # 论文式能级布局与 SVG/PNG 渲染
 orbital_diagram_qt6.py         # 分子轨道能级图配置与结果界面
 multiwfn_batch.py              # 批处理规划与执行核心
 multiwfn_batch_qt6.py          # 批处理工作台界面
+batch_cube_vmd.py              # 批量 Cube 的 VMD 状态复用与 Tachyon 渲染
 multiwfn_recorder_qt6.py       # Multiwfn 操作录制
 style_parameter_dialog_qt6.py  # 风格参数查看与编辑
 vmd_cube_styles/               # 内置且实际使用的风格预览资源

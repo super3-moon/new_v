@@ -1030,7 +1030,9 @@ class MainWindow(QMainWindow):
 
         self.custom_page_index = self.stack.addWidget(self._build_custom_import_page())
         self.batch_page = MultiwfnBatchPage(
-            core.ROOT, lambda: self.multi_edit.text().strip()
+            core.ROOT,
+            lambda: self.multi_edit.text().strip(),
+            lambda: self.vmd_edit.text().strip(),
         )
         self.batch_page.settingsChanged.connect(self._save_batch_settings)
         self.batch_page_index = self.stack.addWidget(self.batch_page)
