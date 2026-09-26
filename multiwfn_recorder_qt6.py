@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from multiwfn_batch import input_base_path
+
 
 class MultiwfnRecorderDialog(QDialog):
     """Run one interactive Multiwfn session and retain every submitted command."""
@@ -144,12 +146,18 @@ class MultiwfnRecorderDialog(QDialog):
         blank_button = QPushButton("空行（回车）")
         zero_button = QPushButton("0 · 返回")
         quit_button = QPushButton("q · 返回 / 退出")
+        self.current_filename_button = QPushButton("插入当前文件名")
+        self.current_filename_button.setToolTip(
+            "插入当前文件的完整路径和名称（不含扩展名），之后可继续补写任意后缀。"
+        )
         blank_button.clicked.connect(lambda: self._submit_command(""))
         zero_button.clicked.connect(lambda: self._submit_command("0"))
         quit_button.clicked.connect(lambda: self._submit_command("q"))
+        self.current_filename_button.clicked.connect(self._insert_current_filename)
         quick_row.addWidget(blank_button)
         quick_row.addWidget(zero_button)
         quick_row.addWidget(quit_button)
+        quick_row.addWidget(self.current_filename_button)
         quick_row.addStretch(1)
         root.addLayout(quick_row)
 
@@ -157,16 +165,10 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_edit = QLineEdit()
         self.command_edit.setPlaceholderText("输入当前菜单选项、数值或文件名，然后按 Enter")
         self.command_edit.returnPressed.connect(self._submit_current_command)
-        self.current_filename_button = QPushButton("插入当前文件名")
-        self.current_filename_button.setToolTip(
-            "在光标处插入当前示例文件的名称（不含扩展名）；可继续补写扩展名或其他内容。"
-        )
-        self.current_filename_button.clicked.connect(self._insert_current_filename)
         self.send_button = QPushButton("发送并记录")
         self.send_button.setObjectName("primaryBtn")
         self.send_button.clicked.connect(self._submit_current_command)
         input_row.addWidget(self.command_edit, 1)
-        input_row.addWidget(self.current_filename_button)
         input_row.addWidget(self.send_button)
         root.addLayout(input_row)
 
@@ -297,7 +299,7 @@ class MultiwfnRecorderDialog(QDialog):
         self._submit_command(value)
 
     def _insert_current_filename(self) -> None:
-        self.command_edit.insert("${stem}")
+        self.command_edit.insert("${input_base}")
         self.command_edit.setFocus()
 
     def _submit_command(self, value: str) -> None:
@@ -309,7 +311,10 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_list.addItem(f"{len(self.recorded_commands):02d}   {shown}")
         self.command_list.scrollToBottom()
         self.count_label.setText(f"{len(self.recorded_commands)} 步")
-        live_command = command.replace("${stem}", self.input_file.stem)
+        live_command = command.replace(
+            "${input_base}", str(input_base_path(self.input_file))
+        )
+        live_command = live_command.replace("${stem}", self.input_file.stem)
         self.process.write((live_command + "\n").encode(self._encoding, errors="replace"))
 
     def _clear_commands(self) -> None:

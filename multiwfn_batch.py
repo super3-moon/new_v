@@ -59,6 +59,14 @@ def _clean_file_part(value: str, fallback: str = "job") -> str:
     return (text or fallback)[:100]
 
 
+def input_base_path(path: Path | str) -> Path:
+    """Return an input path without its file-format suffix."""
+    source = Path(path)
+    if source.name.casefold().endswith(".molden.input"):
+        return source.with_name(source.name[: -len(".molden.input")])
+    return source.with_suffix("")
+
+
 def normalize_extensions(values: Iterable[str]) -> list[str]:
     result: list[str] = []
     for value in values:
@@ -207,6 +215,7 @@ class BatchPreset:
 
         builtins = {
             "input",
+            "input_base",
             "input_dir",
             "name",
             "stem",
@@ -471,6 +480,7 @@ def job_template_values(plan: BatchPlan, job: BatchJob) -> dict[str, object]:
     return {
         **plan.variables,
         "input": str(path),
+        "input_base": str(input_base_path(path)),
         "input_dir": str(path.parent),
         "name": path.name,
         "stem": path.stem,
