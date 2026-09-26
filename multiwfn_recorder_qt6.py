@@ -157,10 +157,16 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_edit = QLineEdit()
         self.command_edit.setPlaceholderText("输入当前菜单选项、数值或文件名，然后按 Enter")
         self.command_edit.returnPressed.connect(self._submit_current_command)
+        self.current_filename_button = QPushButton("插入当前文件名")
+        self.current_filename_button.setToolTip(
+            "在光标处插入当前示例文件的名称（不含扩展名）；可继续补写扩展名或其他内容。"
+        )
+        self.current_filename_button.clicked.connect(self._insert_current_filename)
         self.send_button = QPushButton("发送并记录")
         self.send_button.setObjectName("primaryBtn")
         self.send_button.clicked.connect(self._submit_current_command)
         input_row.addWidget(self.command_edit, 1)
+        input_row.addWidget(self.current_filename_button)
         input_row.addWidget(self.send_button)
         root.addLayout(input_row)
 
@@ -230,12 +236,14 @@ class MultiwfnRecorderDialog(QDialog):
         self._last_exit_code = None
         self.use_button.setEnabled(False)
         self.command_edit.setEnabled(False)
+        self.current_filename_button.setEnabled(False)
         self.send_button.setEnabled(False)
         self.process.start()
 
     def _on_started(self) -> None:
         self.state_label.setText("录制中")
         self.command_edit.setEnabled(True)
+        self.current_filename_button.setEnabled(True)
         self.send_button.setEnabled(True)
         self.command_edit.setFocus()
 
@@ -260,6 +268,7 @@ class MultiwfnRecorderDialog(QDialog):
         self._append_output_text(self._decoder.decode(b"", final=True))
         self._last_exit_code = int(exit_code)
         self.command_edit.setEnabled(False)
+        self.current_filename_button.setEnabled(False)
         self.send_button.setEnabled(False)
         self._detect_generated_files()
         if exit_code == 0 and self.recorded_commands:
@@ -287,6 +296,10 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_edit.clear()
         self._submit_command(value)
 
+    def _insert_current_filename(self) -> None:
+        self.command_edit.insert("${stem}")
+        self.command_edit.setFocus()
+
     def _submit_command(self, value: str) -> None:
         if self.process.state() != QProcess.Running:
             return
@@ -296,7 +309,8 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_list.addItem(f"{len(self.recorded_commands):02d}   {shown}")
         self.command_list.scrollToBottom()
         self.count_label.setText(f"{len(self.recorded_commands)} 步")
-        self.process.write((command + "\n").encode(self._encoding, errors="replace"))
+        live_command = command.replace("${stem}", self.input_file.stem)
+        self.process.write((live_command + "\n").encode(self._encoding, errors="replace"))
 
     def _clear_commands(self) -> None:
         self.recorded_commands.clear()
