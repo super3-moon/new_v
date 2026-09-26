@@ -146,17 +146,23 @@ class MultiwfnRecorderDialog(QDialog):
         blank_button = QPushButton("空行（回车）")
         zero_button = QPushButton("0 · 返回")
         quit_button = QPushButton("q · 返回 / 退出")
+        self.current_path_button = QPushButton("插入当前路径")
+        self.current_path_button.setToolTip(
+            "插入当前文件所在文件夹，并自动附加路径分隔符。"
+        )
         self.current_filename_button = QPushButton("插入当前文件名")
         self.current_filename_button.setToolTip(
-            "插入当前文件的完整路径和名称（不含扩展名），之后可继续补写任意后缀。"
+            "只插入当前文件名（不含扩展名），之后可继续补写任意后缀。"
         )
         blank_button.clicked.connect(lambda: self._submit_command(""))
         zero_button.clicked.connect(lambda: self._submit_command("0"))
         quit_button.clicked.connect(lambda: self._submit_command("q"))
+        self.current_path_button.clicked.connect(self._insert_current_path)
         self.current_filename_button.clicked.connect(self._insert_current_filename)
         quick_row.addWidget(blank_button)
         quick_row.addWidget(zero_button)
         quick_row.addWidget(quit_button)
+        quick_row.addWidget(self.current_path_button)
         quick_row.addWidget(self.current_filename_button)
         quick_row.addStretch(1)
         root.addLayout(quick_row)
@@ -238,6 +244,7 @@ class MultiwfnRecorderDialog(QDialog):
         self._last_exit_code = None
         self.use_button.setEnabled(False)
         self.command_edit.setEnabled(False)
+        self.current_path_button.setEnabled(False)
         self.current_filename_button.setEnabled(False)
         self.send_button.setEnabled(False)
         self.process.start()
@@ -245,6 +252,7 @@ class MultiwfnRecorderDialog(QDialog):
     def _on_started(self) -> None:
         self.state_label.setText("录制中")
         self.command_edit.setEnabled(True)
+        self.current_path_button.setEnabled(True)
         self.current_filename_button.setEnabled(True)
         self.send_button.setEnabled(True)
         self.command_edit.setFocus()
@@ -270,6 +278,7 @@ class MultiwfnRecorderDialog(QDialog):
         self._append_output_text(self._decoder.decode(b"", final=True))
         self._last_exit_code = int(exit_code)
         self.command_edit.setEnabled(False)
+        self.current_path_button.setEnabled(False)
         self.current_filename_button.setEnabled(False)
         self.send_button.setEnabled(False)
         self._detect_generated_files()
@@ -298,8 +307,12 @@ class MultiwfnRecorderDialog(QDialog):
         self.command_edit.clear()
         self._submit_command(value)
 
+    def _insert_current_path(self) -> None:
+        self.command_edit.insert(f"${{input_dir}}{os.sep}")
+        self.command_edit.setFocus()
+
     def _insert_current_filename(self) -> None:
-        self.command_edit.insert("${input_base}")
+        self.command_edit.insert("${input_stem}")
         self.command_edit.setFocus()
 
     def _submit_command(self, value: str) -> None:
@@ -313,6 +326,12 @@ class MultiwfnRecorderDialog(QDialog):
         self.count_label.setText(f"{len(self.recorded_commands)} 步")
         live_command = command.replace(
             "${input_base}", str(input_base_path(self.input_file))
+        )
+        live_command = live_command.replace(
+            "${input_dir}", str(self.input_file.parent)
+        )
+        live_command = live_command.replace(
+            "${input_stem}", input_base_path(self.input_file).name
         )
         live_command = live_command.replace("${stem}", self.input_file.stem)
         self.process.write((live_command + "\n").encode(self._encoding, errors="replace"))
