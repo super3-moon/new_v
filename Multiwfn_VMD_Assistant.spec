@@ -115,7 +115,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='VMD_Multiwfn_Assistant',
+    name='Multiwfn_VMD_Assistant',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

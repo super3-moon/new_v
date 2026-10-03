@@ -144,10 +144,7 @@ class StyleParameterDialog(QDialog):
         layout.addWidget(value_label, row, 1)
 
     def _build_summary_card(self) -> QFrame:
-        card, layout = self._card(
-            "当前风格摘要",
-            "这里只展示绘图时真正生效的视觉设置；需要调整时再进入编辑。",
-        )
+        card, layout = self._card("当前风格摘要")
         grid = QGridLayout()
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(0)

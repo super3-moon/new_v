@@ -2988,7 +2988,7 @@ INDEX_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VMD_Multiwfn_Assistant</title>
+  <title>Multiwfn_VMD_Assistant</title>
   <style>
     :root {
       --bg: #f5f7fb;
@@ -3157,7 +3157,7 @@ INDEX_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="hero">
-    <h1>VMD_Multiwfn_Assistant</h1>
+    <h1>Multiwfn_VMD_Assistant</h1>
     <p>按图片选择风格，自动生成对应名称的 CMD 脚本。</p>
   </div>
 
@@ -3877,9 +3877,9 @@ def main():
     addr = ("127.0.0.1", port)
     server = ThreadingHTTPServer(addr, AppHandler)
     url = f"http://127.0.0.1:{port}"
-    print(f"[VMD Style Integrator] Listening on {url}")
-    print(f"[VMD Style Integrator] Style images folder: {STYLE_DIR}")
-    print("[VMD Style Integrator] Press Ctrl+C to stop.")
+    print(f"[Multiwfn_VMD_Assistant] Listening on {url}")
+    print(f"[Multiwfn_VMD_Assistant] Style images folder: {STYLE_DIR}")
+    print("[Multiwfn_VMD_Assistant] Press Ctrl+C to stop.")
 
     try:
         webbrowser.open(url)
@@ -3889,7 +3889,7 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[VMD Style Integrator] Stopped.")
+        print("\n[Multiwfn_VMD_Assistant] Stopped.")
     finally:
         server.server_close()
 
