@@ -21,6 +21,9 @@ used_style_assets = {
     '23_bright_blue_yellow.png',
     '24_modern_cool_palette.png',
     'esp_e7_wireframe_reference.png',
+    'skeleton_k2_slim_cpk.png',
+    'skeleton_k3_licorice.png',
+    'skeleton_k5_monochrome_silver.png',
 }
 style_data = [
     (str(path), 'vmd_cube_styles')

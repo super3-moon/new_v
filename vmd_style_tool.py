@@ -625,7 +625,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
         "id": "skeleton_slim_cpk",
         "code": "K2",
         "name": "K2 Skeleton · Slim CPK",
-        "image": "18_sob449_1.jpg",
+        "image": "skeleton_k2_slim_cpk.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top CPK 0.700000 0.300000 18.000000 16.000000",
@@ -639,7 +639,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
         "id": "skeleton_licorice",
         "code": "K3",
         "name": "K3 Skeleton · Licorice",
-        "image": "18_sob449_1.jpg",
+        "image": "skeleton_k3_licorice.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top Licorice 0.200000 12.000000 12.000000",
@@ -653,7 +653,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
         "id": "skeleton_monochrome_silver",
         "code": "K5",
         "name": "K5 Skeleton · Monochrome Silver",
-        "image": "19_sob449_2.jpg",
+        "image": "skeleton_k5_monochrome_silver.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
