@@ -866,7 +866,7 @@ class OrbitalDiagramPage(QWidget):
         style_row.addWidget(choose_style)
         style_layout.addLayout(style_row)
         interaction = QLabel(
-            "VMD 交互步骤：打开后自由调整一切，最后点“保存全部参数并确认”。无需开始记录。确认后其余轨道会复用同一视角与全部显示参数。"
+            "在 VMD 中调整外观和视角，完成后点击“保存全部参数并确认”。其余轨道将使用相同的视角与显示设置。"
         )
         interaction.setObjectName("batchPresetSummary")
         interaction.setWordWrap(True)

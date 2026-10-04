@@ -370,8 +370,7 @@ class MultiwfnRecorderDialog(QDialog):
             QMessageBox.information(
                 self,
                 "操作尚未完成",
-                "Multiwfn 仍在等待输入。请完成后续菜单操作，返回主菜单并输入 q 正常退出；"
-                "否则批量回放会在输入流结束时报错。",
+                "请完成操作，返回主菜单并输入 q 正常退出后，再采用记录。",
             )
             return
         if self._last_exit_code != 0:

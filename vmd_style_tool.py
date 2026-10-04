@@ -98,7 +98,7 @@ ORIGINAL_SURFACE_STYLES = [
             "light 3 off",
         ],
         "sources": ["http://sobereva.com/447"],
-        "notes": "Default showorb-style dual-color glossy isosurface.",
+        "notes": "红蓝双色等值面，光泽鲜明。",
     },
     {
         "id": "classic_glossy_483",
@@ -114,7 +114,7 @@ ORIGINAL_SURFACE_STYLES = [
             "light 3 off",
         ],
         "sources": ["http://sobereva.com/483"],
-        "notes": "Same visual core as showorb classic style.",
+        "notes": "红蓝双色等值面，光泽鲜明。",
     },
     {
         "id": "soft_glossy_449",
@@ -136,7 +136,7 @@ ORIGINAL_SURFACE_STYLES = [
             "light 3 on",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "Color and material tuning from VMDrender.txt logic.",
+        "notes": "柔和的青绿双色等值面，搭配棕褐色球棍骨架。",
     },
     {
         "id": "bright_bule_yellow_userpack",
@@ -238,7 +238,7 @@ ORIGINAL_SURFACE_STYLES = [
             "http://sobereva.com/449",
             "Multiwfn examples/scripts/VMDrender.txt",
         ],
-        "notes": "Exact VMD scene parameters from Multiwfn VMDrender.txt; the reference uses Tachyon -trans_raster3d -mediumshade rendering.",
+        "notes": "半透明青绿等值面，搭配轮廓清晰的棕褐色球棍骨架。",
     },
 ]
 
@@ -352,7 +352,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "https://www.umsyar.com/443",
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node124.html",
         ],
-        notes="文章 443 与 Multiwfn ESPiso.vmd 的单分子默认样式；电子密度 0.001 a.u. 等值面映射 ESP，BWR，范围 -0.03 至 +0.03 a.u.。",
+        notes="红白蓝静电势表面，带半透明玻璃效果；色带范围 -0.03 至 +0.03 a.u.。",
     ),
     _esp_style(
         id="esp_e2_bwr_translucent",
@@ -369,7 +369,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "https://www.umsyar.com/483",
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node136.html",
         ],
-        notes="与 E1 使用同一 ESP 映射和范围，仅改用 VMD 1.9.3 的 Translucent 材质参数。",
+        notes="半透明的红白蓝静电势表面，搭配柔和光照。",
     ),
     _esp_style(
         id="esp_e3_bwr_edgyglass_443",
@@ -392,7 +392,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "material change outline EdgyGlass 0.500000",
         ],
         sources=["Multiwfn examples/drawESP/ESPiso.vmd", "https://www.umsyar.com/443"],
-        notes="Multiwfn ESPiso.vmd 的 EdgyGlass 原始参数；BWR，-0.03 至 +0.03 a.u.。",
+        notes="轮廓清晰的半透明玻璃表面，使用红白蓝静电势配色。",
     ),
     _esp_style(
         id="esp_e4_turbo_edgyglass_443",
@@ -419,7 +419,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "material change specular EdgyGlass 0.250000",
         ],
         sources=["https://www.umsyar.com/443", "https://research.google/blog/turbo-an-improved-rainbow-colormap-for-visualization/"],
-        notes="思想家公社示例的 Turbo、正交投影与 EdgyGlass 参数；范围 -0.06 至 +0.06 a.u.。VMD 1.9.3 用内置色表兼容实现。",
+        notes="Turbo 多色静电势表面，采用正交视角和半透明玻璃效果；色带范围 -0.06 至 +0.06 a.u.。",
     ),
     _esp_style(
         id="esp_e5_bwr_diffuse",
@@ -448,7 +448,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "Multiwfn examples/drawESP/ESPiso2.vmd",
             "https://www.umsyar.com/443",
         ],
-        notes="Multiwfn ESPiso2.vmd 的 GlassBubble 参数；BWR，-0.03 至 +0.03 a.u.，适合透明表面或重叠观察。",
+        notes="通透的红白蓝静电势表面，适合观察表面重叠。",
     ),
     _esp_style(
         id="esp_e7_bwr_wireframe",
@@ -468,7 +468,7 @@ _SELECTED_STYLE_RESEARCH_ENTRIES = [
             "https://www.ks.uiuc.edu/Research/vmd/current/ug/node77.html",
             "https://www.ks.uiuc.edu/Research/vmd/mailing_list/vmd-l/29283.html",
         ],
-        notes="ESP 映射电子密度等值面，VMD Isosurface Draw=Wireframe，Step=3；封面来自明确标注为 VMD Wireframe Isosurface 的教程示例。",
+        notes="红白蓝静电势线框表面，可同时观察分子骨架。",
     ),
 ]
 
@@ -553,7 +553,7 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "Baseline CPK+Opaque skeleton style.",
+        "notes": "不透明球棍骨架，按元素区分颜色。",
     },
     {
         "id": "skeleton_tan_opaque_449",
@@ -572,7 +572,7 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "Soft tan carbon color with stronger Opaque outline.",
+        "notes": "棕褐色碳原子球棍骨架，轮廓清晰。",
     },
     {
         "id": "skeleton_goodsell_58009",
@@ -594,7 +594,7 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Goodsell",
         ],
         "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Forum-shared soft Goodsell skeleton look.",
+        "notes": "柔和的插画式球棍骨架，带明显轮廓。",
     },
     {
         "id": "skeleton_edgy_58009",
@@ -616,7 +616,7 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Edgy",
         ],
         "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "Forum-shared sharp Edgy skeleton look.",
+        "notes": "边缘锐利的球棍骨架，高光较弱。",
     },
 ]
 
@@ -633,7 +633,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["Multiwfn examples/IRIfill.vmd"],
-        "notes": "Multiwfn IRI 示例采用的较细 CPK 分辨率与球棍比例。",
+        "notes": "较细的球棍骨架，按元素区分颜色。",
     },
     {
         "id": "skeleton_licorice",
@@ -647,7 +647,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node62.html"],
-        "notes": "VMD Licorice 细棒骨架，键半径 0.2、球/棒分辨率 12。",
+        "notes": "细棒骨架，突出化学键。",
     },
     {
         "id": "skeleton_monochrome_silver",
@@ -661,7 +661,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node55.html"],
-        "notes": "统一 Silver（ColorID 6）的中性骨架，减少与等值面配色竞争。",
+        "notes": "统一银灰色球棍骨架。",
     },
 ]
 _NEW_SKELETON_IDS = (

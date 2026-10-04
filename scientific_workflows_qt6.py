@@ -206,10 +206,7 @@ class ScientificWorkflowPage(QWidget):
         method_layout.addWidget(self.rdg_interfragment_check)
         layout.addWidget(method_card)
 
-        input_card, input_layout = self._card(
-            "2 · 添加计算文件",
-            "程序只读取原文件；计算产生的 Cube、日志和图片会写入新的任务目录。",
-        )
+        input_card, input_layout = self._card("2 · 添加计算文件")
         self.input_form = QFormLayout()
         self.input_form.setHorizontalSpacing(12)
         self.input_form.setVerticalSpacing(9)
@@ -517,8 +514,7 @@ class ScientificWorkflowPage(QWidget):
             "nto": "先导出 NTO 波函数，再自动选择具有最大 NTO 本征值的空穴/电子对生成 Cube。",
             "spin": "适用于包含有效开壳层信息的波函数；生成数据后可在 VMD 中自由调整。",
             "deformation": (
-                "按 Multiwfn 手册以同一几何下的分子密度减去球对称自由原子密度；"
-                "程序会使用 Multiwfn 随附的 atomwfn 数据，不会额外调用 Gaussian。"
+                "计算分子电子密度与同一几何下球对称自由原子叠加密度之差。"
             ),
             "fragment_difference": (
                 "按 Multiwfn 手册 3.7.1 与教程 4.5.5，在目标体系网格上依次减去所有参考体系电子密度。"

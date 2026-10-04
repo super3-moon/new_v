@@ -1374,8 +1374,7 @@ class MainWindow(QMainWindow):
         light_l.addLayout(self._labeled_layout("灯光", light_row))
         self.ai_conf_label = QLabel("识别可靠度：尚未识别")
         self.ai_uncertain_label = QLabel("建议检查：尚未识别")
-        self.ai_method_label = QLabel("识别方式：尚未识别")
-        for label in (self.ai_conf_label, self.ai_uncertain_label, self.ai_method_label):
+        for label in (self.ai_conf_label, self.ai_uncertain_label):
             label.setObjectName("resultText")
             label.setWordWrap(True)
             light_l.addWidget(label)
@@ -3422,16 +3421,9 @@ class MainWindow(QMainWindow):
                 if field in field_labels
             }
         )
-        source_labels = {
-            "本地测色": "图片测色",
-            "测色 + AI": "图片测色和 AI 分析",
-        }
         self.ai_conf_label.setText(f"识别可靠度：{reliability}")
         self.ai_uncertain_label.setText(
             "建议检查：" + ("、".join(uncertain_labels) if uncertain_labels else "无")
-        )
-        self.ai_method_label.setText(
-            f"识别方式：{source_labels.get(source, source)}"
         )
 
     def _guess_from_result_panel(self) -> dict:

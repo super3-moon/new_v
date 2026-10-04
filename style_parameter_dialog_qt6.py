@@ -253,10 +253,11 @@ class StyleParameterDialog(QDialog):
         self.title_label.setObjectName("dialogTitle")
         title_row.addWidget(self.title_label, 1)
         header_layout.addLayout(title_row)
-        selection = QLabel(selection_text)
-        selection.setObjectName("helperText")
-        selection.setWordWrap(True)
-        header_layout.addWidget(selection)
+        if selection_text.strip() and not selection_text.strip().startswith("套装风格："):
+            selection = QLabel(selection_text)
+            selection.setObjectName("helperText")
+            selection.setWordWrap(True)
+            header_layout.addWidget(selection)
         root.addWidget(header)
 
         self.scroll = QScrollArea()

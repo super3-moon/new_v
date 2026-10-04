@@ -335,7 +335,7 @@ class AutomationStyleDialog(QDialog):
             else (
                 "这里只显示具有正、负相位配色的轨道等值面方案。它是进入 VMD 时的初始方案；确认前仍可在 VMD 中自由调整全部显示参数。"
                 if self.surface_mode == "signed"
-                else "这里只显示能够把 ESP 数据映射到电子密度表面的方案。科学等值面仍由自动化流程统一控制。"
+                else "选择将 ESP 映射到电子密度表面的绘图方案。"
             )
         )
         hint.setObjectName("batchHint")
@@ -915,7 +915,7 @@ class AutomaticWorkflowsPage(QWidget):
 
         style_card, style_layout = self._card(
             "2 · 选择绘图方案",
-            "绘图方案只控制骨架、材质、色带和光照等外观，不会改变上一步的计算结果。",
+            "选择分子骨架、材质、色带和光照。",
         )
         style_row = QHBoxLayout()
         style_row.setSpacing(14)
@@ -953,10 +953,7 @@ class AutomaticWorkflowsPage(QWidget):
         style_layout.addLayout(style_row)
         body_layout.addWidget(style_card)
 
-        settings_card, settings_layout = self._card(
-            "3 · 计算与输出设置",
-            "电子密度等值面会同时用于数据计算和最终绘图，避免前后数值不一致。",
-        )
+        settings_card, settings_layout = self._card("3 · 计算与输出设置")
         settings_grid = QGridLayout()
         settings_grid.setHorizontalSpacing(10)
         settings_grid.setVerticalSpacing(10)
