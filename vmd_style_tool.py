@@ -545,7 +545,7 @@ ORIGINAL_SKELETON_STYLES = [
     {
         "id": "skeleton_default_opaque",
         "name": "Skeleton Default Opaque",
-        "image": "18_sob449_1.jpg",
+        "image": "skeleton_default_opaque_verified.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
@@ -553,12 +553,12 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "不透明球棍骨架，按元素区分颜色。",
+        "notes": "CPK ball-and-stick with Opaque material.",
     },
     {
         "id": "skeleton_tan_opaque_449",
         "name": "Skeleton Tan Opaque",
-        "image": "19_sob449_2.jpg",
+        "image": "skeleton_tan_opaque_449_verified.png",
         "pre_commands": [
             "color Name C tan",
             "color change rgb tan 0.700000 0.560000 0.360000",
@@ -572,12 +572,12 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["http://sobereva.com/449"],
-        "notes": "棕褐色碳原子球棍骨架，轮廓清晰。",
+        "notes": "CPK ball-and-stick with tan carbon atoms.",
     },
     {
         "id": "skeleton_goodsell_58009",
         "name": "Skeleton Goodsell",
-        "image": "13_bbs_goodsell_example.jpg",
+        "image": "skeleton_goodsell_58009_verified.png",
         "pre_commands": [
             "material change ambient Goodsell 0.650000",
             "material change diffuse Goodsell 1.000000",
@@ -593,13 +593,16 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modcolor 0 top Name",
             "mol modmaterial 0 top Goodsell",
         ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "柔和的插画式球棍骨架，带明显轮廓。",
+        "sources": [
+            "http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009",
+            "https://www.ks.uiuc.edu/Research/vmd/minitutorials/glsloutline/",
+        ],
+        "notes": "CPK ball-and-stick with Goodsell outline material.",
     },
     {
         "id": "skeleton_edgy_58009",
         "name": "Skeleton Edgy",
-        "image": "14_bbs_edgy_example1.jpg",
+        "image": "skeleton_edgy_58009_verified.png",
         "pre_commands": [
             "material change ambient Edgy 0.400000",
             "material change diffuse Edgy 0.880000",
@@ -615,8 +618,11 @@ ORIGINAL_SKELETON_STYLES = [
             "mol modcolor 0 top Name",
             "mol modmaterial 0 top Edgy",
         ],
-        "sources": ["http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009"],
-        "notes": "边缘锐利的球棍骨架，高光较弱。",
+        "sources": [
+            "http://bbs.keinsci.com/forum.php?mod=viewthread&tid=58009",
+            "https://www.ks.uiuc.edu/Research/vmd/minitutorials/glsloutline/",
+        ],
+        "notes": "CPK ball-and-stick with Edgy outline material.",
     },
 ]
 
@@ -625,7 +631,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
         "id": "skeleton_slim_cpk",
         "code": "K2",
         "name": "K2 Skeleton · Slim CPK",
-        "image": "skeleton_k2_slim_cpk.png",
+        "image": "skeleton_slim_cpk_verified.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top CPK 0.700000 0.300000 18.000000 16.000000",
@@ -633,13 +639,13 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["Multiwfn examples/IRIfill.vmd"],
-        "notes": "较细的球棍骨架，按元素区分颜色。",
+        "notes": "CPK ball-and-stick; sphere scale 0.7.",
     },
     {
         "id": "skeleton_licorice",
         "code": "K3",
         "name": "K3 Skeleton · Licorice",
-        "image": "skeleton_k3_licorice.png",
+        "image": "skeleton_licorice_verified.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top Licorice 0.200000 12.000000 12.000000",
@@ -647,13 +653,13 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node62.html"],
-        "notes": "细棒骨架，突出化学键。",
+        "notes": "Licorice sticks; radius 0.2 Å.",
     },
     {
         "id": "skeleton_monochrome_silver",
         "code": "K5",
         "name": "K5 Skeleton · Monochrome Silver",
-        "image": "skeleton_k5_monochrome_silver.png",
+        "image": "skeleton_monochrome_silver_verified.png",
         "pre_commands": [],
         "rep0_commands": [
             "mol modstyle 0 top CPK 0.800000 0.300000 22.000000 22.000000",
@@ -661,7 +667,7 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
             "mol modmaterial 0 top Opaque",
         ],
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node55.html"],
-        "notes": "统一银灰色球棍骨架。",
+        "notes": "CPK ball-and-stick in uniform silver (ColorID 6).",
     },
 ]
 _NEW_SKELETON_IDS = (
@@ -1117,8 +1123,20 @@ def _dedupe_commands(commands: list[str]) -> list[str]:
 
 
 def compose_combo_style(skeleton_style: dict, iso_style: dict) -> dict:
+    skeleton_commands = list(skeleton_style.get("pre_commands", []))
+    # Bundle presets can contain their own skeleton colors. An explicitly
+    # selected skeleton owns those atom-name mappings in split mode.
+    skeleton_color_targets = {
+        tuple(command.split()[:3])
+        for command in skeleton_commands
+        if command.startswith("color Name ")
+    }
+    iso_commands = [
+        command for command in iso_style.get("commands", [])
+        if tuple(command.split()[:3]) not in skeleton_color_targets
+    ]
     combo_commands = _dedupe_commands(
-        BASE_VIEW + skeleton_style.get("pre_commands", []) + iso_style.get("commands", [])
+        BASE_VIEW + skeleton_commands + iso_commands
     )
     combo = {
         "id": f"combo_{skeleton_style['id']}__{iso_style['id']}",

@@ -14,16 +14,16 @@ used_style_assets = {
     '07_glossy_default.jpg',
     '08_vmdrender_soft_material.jpg',
     '10_tachyon_mediumshade_vmd.jpg',
-    '13_bbs_goodsell_example.jpg',
-    '14_bbs_edgy_example1.jpg',
-    '18_sob449_1.jpg',
-    '19_sob449_2.jpg',
     '23_bright_blue_yellow.png',
     '24_modern_cool_palette.png',
     'esp_e7_wireframe_reference.png',
-    'skeleton_k2_slim_cpk.png',
-    'skeleton_k3_licorice.png',
-    'skeleton_k5_monochrome_silver.png',
+    'skeleton_default_opaque_verified.png',
+    'skeleton_tan_opaque_449_verified.png',
+    'skeleton_goodsell_58009_verified.png',
+    'skeleton_edgy_58009_verified.png',
+    'skeleton_slim_cpk_verified.png',
+    'skeleton_licorice_verified.png',
+    'skeleton_monochrome_silver_verified.png',
 }
 style_data = [
     (str(path), 'vmd_cube_styles')

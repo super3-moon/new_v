@@ -35,14 +35,21 @@ vmd19.3/
 /vmd_cube_styles/09_tachyon_fullshade_raster3d.jpg
 /vmd_cube_styles/11_rdg_depthcue_off.png
 /vmd_cube_styles/12_rdg_light3_on.png
+/vmd_cube_styles/13_bbs_goodsell_example.jpg
+/vmd_cube_styles/14_bbs_edgy_example1.jpg
 /vmd_cube_styles/15_bbs_edgy_example2.jpg
 /vmd_cube_styles/16_bbs_edgy_example3.jpg
 /vmd_cube_styles/17_bbs_edgy_example4.jpg
+/vmd_cube_styles/18_sob449_1.jpg
+/vmd_cube_styles/19_sob449_2.jpg
 /vmd_cube_styles/20_sob449_3.jpg
 /vmd_cube_styles/21_sob449_4.jpg
 /vmd_cube_styles/22_sob449_5.jpg
 /vmd_cube_styles/edgy.vmd
 /vmd_cube_styles/goodsell.vmd
+/vmd_cube_styles/skeleton_k2_slim_cpk.png
+/vmd_cube_styles/skeleton_k3_licorice.png
+/vmd_cube_styles/skeleton_k5_monochrome_silver.png
 
 # Local machine configuration
 vmd_style_tool_config.json
