@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,11 @@ def input_base_path(path: Path | str) -> Path:
     if source.name.casefold().endswith(".molden.input"):
         return source.with_name(source.name[: -len(".molden.input")])
     return source.with_suffix("")
+
+
+def input_file_key(path: Path | str) -> str:
+    """Identify a source file independently of its name or position in a queue."""
+    return os.path.normcase(str(Path(path).expanduser().resolve()))
 
 
 def normalize_extensions(values: Iterable[str]) -> list[str]:
@@ -354,6 +360,7 @@ class BatchJob:
     return_code: int | None = None
     error: str = ""
     outputs: list[str] = field(default_factory=list)
+    stdin_template: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -368,6 +375,8 @@ class BatchJob:
             "return_code": self.return_code,
             "error": self.error,
             "outputs": list(self.outputs),
+            "command_source": "custom" if self.stdin_template is not None else "shared",
+            "stdin_template": self.stdin_template,
         }
 
 
@@ -416,6 +425,7 @@ def create_batch_plan(
     *,
     prefix: str = "batch",
     vmd_settings: dict[str, object] | None = None,
+    command_overrides: dict[str, str] | None = None,
 ) -> BatchPlan:
     preset.validate()
     allowed = set(preset.input_extensions)
@@ -438,6 +448,23 @@ def create_batch_plan(
     paths = list(unique.values())
     if not paths:
         raise BatchValidationError("没有可运行的输入文件。")
+
+    overrides = {
+        input_file_key(path): text
+        for path, text in (command_overrides or {}).items()
+    }
+    for path in paths:
+        key = input_file_key(path)
+        if key not in overrides:
+            continue
+        if not isinstance(overrides[key], str):
+            raise BatchValidationError(f"{path.name} 的单独命令必须为文本。")
+        adjusted = deepcopy(preset)
+        adjusted.stdin_template = overrides[key]
+        try:
+            adjusted.validate()
+        except BatchValidationError as exc:
+            raise BatchValidationError(f"{path.name} 的单独命令无效：{exc}") from exc
 
     resolved_variables = dict(preset.variables)
     resolved_variables.update(
@@ -462,6 +489,7 @@ def create_batch_plan(
                 index=index,
                 input_path=path,
                 work_dir=run_dir / "jobs" / folder,
+                stdin_template=overrides.get(input_file_key(path)),
             )
         )
     return BatchPlan(
@@ -498,7 +526,10 @@ def render_job_preview(
 ) -> dict[str, object]:
     values = job_template_values(plan, job)
     arguments = [render_template(item, values) for item in plan.preset.arguments]
-    stdin_text = render_template(plan.preset.stdin_template, values)
+    stdin_text = render_template(
+        job.stdin_template if job.stdin_template is not None else plan.preset.stdin_template,
+        values,
+    )
     if not stdin_text.endswith("\n"):
         stdin_text += "\n"
     return {
@@ -506,6 +537,7 @@ def render_job_preview(
         "stdin": stdin_text,
         "work_dir": str(job.work_dir),
         "values": values,
+        "command_source": "custom" if job.stdin_template is not None else "shared",
     }
 
 
@@ -660,11 +692,10 @@ class MultiwfnBatchRunner:
         job.started_at = datetime.now().isoformat(timespec="seconds")
         job.status = STATUS_RUNNING
         job.work_dir.mkdir(parents=True, exist_ok=False)
-        values = self._job_values(job)
-        stdin_text = render_template(self.plan.preset.stdin_template, values)
-        if not stdin_text.endswith("\n"):
-            stdin_text += "\n"
-        arguments = [render_template(item, values) for item in self.plan.preset.arguments]
+        preview = render_job_preview(self.plan, job, self.multiwfn_exe)
+        values = preview["values"]
+        stdin_text = preview["stdin"]
+        arguments = preview["command"][2:]
         _write_text_atomic(job.work_dir / "stdin.txt", stdin_text)
         _write_text_atomic(
             job.work_dir / "job.json",
@@ -674,6 +705,12 @@ class MultiwfnBatchRunner:
                     "command": [str(self.multiwfn_exe), str(job.input_path), *arguments],
                     "preset": self.plan.preset.to_dict(),
                     "variables": values,
+                    "command_source": preview["command_source"],
+                    "stdin_template": (
+                        job.stdin_template
+                        if job.stdin_template is not None
+                        else self.plan.preset.stdin_template
+                    ),
                 },
                 ensure_ascii=False,
                 indent=2,

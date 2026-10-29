@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTableWidgetSelectionRange,
     QVBoxLayout,
     QWidget,
 )
@@ -218,6 +220,228 @@ class BatchFileTable(QTableWidget):
         event.acceptProposedAction()
 
 
+class FileCommandDialog(QDialog):
+    """Edit commands for explicitly selected source files, without changing a preset."""
+
+    def __init__(
+        self, files: list[Path], preset: batch.BatchPreset,
+        overrides: dict[str, str], parent: QWidget | None = None,
+        selected_keys: set[str] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.files = list(files)
+        self.preset = copy.deepcopy(preset)
+        self.overrides = dict(overrides)
+        self._rows: list[int] = []
+        self._loading = False
+        self._dirty = False
+        self.setWindowTitle("按文件微调命令")
+        self.resize(1080, 720)
+        self.setMinimumSize(800, 560)
+        root = QVBoxLayout(self)
+        hint = QLabel(
+            "未单独设置的文件使用统一命令。可多选文件或输入序号范围，编辑后点击“应用到选中文件”。\n"
+            "修改统一命令不会覆盖已单独设置的命令。VMD 仍统一使用首个 Cube 确认的视角与显示设置。"
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        root.addWidget(splitter, 1)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        range_row = QHBoxLayout()
+        self.range_edit = QLineEdit()
+        self.range_edit.setPlaceholderText("序号范围，例如 1-3,6")
+        range_button = QPushButton("选择范围")
+        range_button.clicked.connect(self._select_range)
+        self.range_edit.returnPressed.connect(self._select_range)
+        range_row.addWidget(self.range_edit, 1)
+        range_row.addWidget(range_button)
+        left_layout.addLayout(range_row)
+        self.file_table = QTableWidget(0, 3)
+        self.file_table.setHorizontalHeaderLabels(["序号", "文件", "命令"])
+        self.file_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.file_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.file_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.file_table.setAlternatingRowColors(True)
+        self.file_table.verticalHeader().setVisible(False)
+        self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.file_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.file_table.setRowCount(len(self.files))
+        for row, path in enumerate(self.files):
+            self.file_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            item = QTableWidgetItem(path.name)
+            item.setToolTip(str(path))
+            self.file_table.setItem(row, 1, item)
+            self.file_table.setItem(row, 2, QTableWidgetItem())
+        self._refresh_status()
+        self.file_table.itemSelectionChanged.connect(self._selection_changed)
+        left_layout.addWidget(self.file_table, 1)
+        left_layout.addWidget(QLabel("按住 Ctrl 多选，按住 Shift 连选。"))
+        splitter.addWidget(left)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(8, 0, 0, 0)
+        self.selection_label = QLabel()
+        self.selection_label.setWordWrap(True)
+        right_layout.addWidget(self.selection_label)
+        tools = QHBoxLayout()
+        load_shared = QPushButton("载入统一命令")
+        load_shared.clicked.connect(lambda: self.editor.set_text(self.preset.stdin_template))
+        tools.addWidget(load_shared)
+        import_text = QPushButton("导入命令 TXT")
+        import_text.clicked.connect(self._import_text)
+        tools.addWidget(import_text)
+        tools.addStretch(1)
+        right_layout.addLayout(tools)
+        self.editor = SequenceEditor()
+        self.editor.raw_edit.textChanged.connect(self._mark_dirty)
+        right_layout.addWidget(self.editor, 1)
+        actions = QHBoxLayout()
+        self.restore_button = QPushButton("选中文件恢复统一命令")
+        self.restore_button.clicked.connect(self._restore_selected)
+        self.apply_button = QPushButton("应用到选中文件")
+        self.apply_button.setObjectName("primaryBtn")
+        self.apply_button.clicked.connect(self._apply_selected)
+        actions.addWidget(self.restore_button)
+        actions.addWidget(self.apply_button)
+        right_layout.addLayout(actions)
+        splitter.addWidget(right)
+        splitter.setSizes([430, 610])
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        done = QPushButton("完成")
+        done.setObjectName("primaryBtn")
+        done.clicked.connect(self.accept)
+        footer.addWidget(cancel)
+        footer.addWidget(done)
+        root.addLayout(footer)
+        initial_rows = [
+            row for row, path in enumerate(self.files)
+            if batch.input_file_key(path) in (selected_keys or set())
+        ]
+        self._select_rows(initial_rows or ([0] if self.files else []))
+
+    def _refresh_status(self) -> None:
+        for row, path in enumerate(self.files):
+            self.file_table.item(row, 2).setText(
+                "单独命令" if batch.input_file_key(path) in self.overrides else "统一命令"
+            )
+
+    def _mark_dirty(self) -> None:
+        if not self._loading:
+            self._dirty = True
+
+    def _select_rows(self, rows: list[int]) -> None:
+        self.file_table.blockSignals(True)
+        self.file_table.clearSelection()
+        for row in rows:
+            self.file_table.setRangeSelected(QTableWidgetSelectionRange(row, 0, row, 2), True)
+        self.file_table.blockSignals(False)
+        self._selection_changed()
+
+    def _select_range(self) -> None:
+        rows: set[int] = set()
+        try:
+            terms = self.range_edit.text().strip().replace("，", ",").split(",")
+            for term in terms:
+                match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+))?\s*", term)
+                if match is None:
+                    raise ValueError
+                start = int(match[1])
+                end = int(match[2] or match[1])
+                if not 1 <= start <= end <= len(self.files):
+                    raise ValueError
+                rows.update(range(start - 1, end))
+        except ValueError:
+            QMessageBox.information(self, "范围无效", f"请输入 1 至 {len(self.files)} 内的序号，例如 1-3,6。")
+            return
+        self._select_rows(sorted(rows))
+
+    def _resolve_edits(self) -> bool:
+        if not self._dirty:
+            return True
+        answer = QMessageBox.question(
+            self, "命令尚未应用", "编辑的命令尚未应用。要应用到当前选中的文件吗？",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if answer == QMessageBox.Save:
+            return self._apply_selected()
+        return answer == QMessageBox.Discard
+
+    def _selection_changed(self) -> None:
+        rows = sorted({item.row() for item in self.file_table.selectedItems()})
+        if not self._resolve_edits():
+            self.file_table.blockSignals(True)
+            self.file_table.clearSelection()
+            for row in self._rows:
+                self.file_table.setRangeSelected(QTableWidgetSelectionRange(row, 0, row, 2), True)
+            self.file_table.blockSignals(False)
+            return
+        self._rows = rows
+        self._load_selection()
+
+    def _load_selection(self) -> None:
+        texts = {
+            self.overrides.get(batch.input_file_key(self.files[row]), self.preset.stdin_template)
+            for row in self._rows
+        }
+        self._loading = True
+        self.editor.set_text(next(iter(texts)) if len(texts) == 1 else self.preset.stdin_template)
+        self._loading = False
+        self._dirty = False
+        self.editor.setEnabled(bool(self._rows))
+        self.apply_button.setEnabled(bool(self._rows))
+        self.restore_button.setEnabled(bool(self._rows))
+        text = f"已选 {len(self._rows)} 个文件"
+        if len(texts) > 1:
+            text += "，原命令不同；当前显示统一命令，应用后将替换选中文件的命令。"
+        self.selection_label.setText(text)
+
+    def _apply_selected(self) -> bool:
+        if not self._rows:
+            return False
+        adjusted = copy.deepcopy(self.preset)
+        adjusted.stdin_template = self.editor.text()
+        try:
+            adjusted.validate()
+        except batch.BatchValidationError as exc:
+            QMessageBox.information(self, "命令无效", str(exc))
+            return False
+        for row in self._rows:
+            self.overrides[batch.input_file_key(self.files[row])] = adjusted.stdin_template
+        self._dirty = False
+        self._refresh_status()
+        self.selection_label.setText(f"已为 {len(self._rows)} 个文件应用单独命令。")
+        return True
+
+    def _restore_selected(self) -> None:
+        if not self._resolve_edits():
+            return
+        for row in self._rows:
+            self.overrides.pop(batch.input_file_key(self.files[row]), None)
+        self._refresh_status()
+        self._load_selection()
+
+    def _import_text(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "导入命令 TXT", "", "Text (*.txt);;All Files (*)")
+        if path:
+            try:
+                self.editor.set_text(batch.read_command_text_file(path))
+            except batch.BatchValidationError as exc:
+                QMessageBox.information(self, "导入失败", str(exc))
+
+    def accept(self) -> None:
+        if self._resolve_edits():
+            super().accept()
+
+
 class BatchExecutionWorker(QObject):
     event = Signal(object)
     finished = Signal(object, object)
@@ -232,6 +456,7 @@ class BatchExecutionWorker(QObject):
         vmd_exe: Path | None,
         vmd_settings: dict[str, object],
         prefix: str,
+        command_overrides: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.files = files
@@ -242,6 +467,7 @@ class BatchExecutionWorker(QObject):
         self.vmd_exe = vmd_exe
         self.vmd_settings = copy.deepcopy(vmd_settings)
         self.prefix = prefix
+        self.command_overrides = dict(command_overrides or {})
         self.runner: batch.MultiwfnBatchRunner | None = None
         self.cancel_requested = False
 
@@ -255,6 +481,7 @@ class BatchExecutionWorker(QObject):
                 self.variables,
                 prefix=self.prefix,
                 vmd_settings=self.vmd_settings,
+                command_overrides=self.command_overrides,
             )
             self.runner = batch.MultiwfnBatchRunner(
                 plan,
@@ -293,6 +520,9 @@ class MultiwfnBatchPage(QWidget):
         self.vmd_path_getter = vmd_path_getter
         self.files: list[Path] = []
         self.file_enabled: dict[str, bool] = {}
+        self.command_overrides: dict[str, str] = {}
+        self._command_scope = ""
+        self._file_command_drafts: dict[str, dict[str, str]] = {}
         self.presets: list[batch.BatchPreset] = []
         self.thread: QThread | None = None
         self.worker: BatchExecutionWorker | None = None
@@ -306,6 +536,7 @@ class MultiwfnBatchPage(QWidget):
         self._loaded_summary_text = ""
         self._active_run_mode = ""
         self._trial_signature = ""
+        self._trial_reference_signature = ""
         self._trial_vmd_template: dict[str, str] = {}
         self._continue_requires_retrial = False
         self._tab_animation: QPropertyAnimation | None = None
@@ -510,13 +741,14 @@ class MultiwfnBatchPage(QWidget):
         scan_row.addWidget(self.file_count_label)
         input_layout.addLayout(scan_row)
 
-        self.file_table = BatchFileTable(0, 3)
+        self.file_table = BatchFileTable(0, 4)
         self.file_table.pathsDropped.connect(self._handle_dropped_paths)
         self.file_table.itemChanged.connect(self._on_file_item_changed)
-        self.file_table.setHorizontalHeaderLabels(["启用", "文件", "格式"])
+        self.file_table.setHorizontalHeaderLabels(["启用", "文件", "格式", "命令"])
         self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.file_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.file_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.file_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.file_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.file_table.setAlternatingRowColors(True)
@@ -605,6 +837,15 @@ class MultiwfnBatchPage(QWidget):
         self.sequence_editor = SequenceEditor()
         self.sequence_editor.setMinimumHeight(300)
         sequence_layout.addWidget(self.sequence_editor, 1)
+        file_commands_row = QHBoxLayout()
+        self.file_commands_button = QPushButton("按文件微调命令")
+        self.file_commands_button.clicked.connect(self._edit_file_commands)
+        self.file_commands_summary = QLabel("所有文件使用统一命令")
+        self.file_commands_summary.setObjectName("batchHint")
+        self.file_commands_summary.setWordWrap(True)
+        file_commands_row.addWidget(self.file_commands_button)
+        file_commands_row.addWidget(self.file_commands_summary, 1)
+        sequence_layout.addLayout(file_commands_row)
         template_page_layout.addWidget(sequence_frame)
 
         output_frame, output_layout = self._pane("3 · 指定批量完成后要保留的结果")
@@ -1009,14 +1250,18 @@ class MultiwfnBatchPage(QWidget):
         self._invalidate_trial_if_needed()
         self._update_editor_state_chrome()
 
-    def _configuration_signature(self) -> str:
+    def _configuration_signature(self, *, reference_only: bool = False) -> str:
         try:
             preset = self._preset_from_editor(
                 preset_id=self._editor_preset_id or "unsaved_draft"
             )
+            files = self._enabled_files()
+            if reference_only:
+                files = files[:1]
             payload = {
                 "preset": preset.to_dict(),
-                "files": [self._file_key(path) for path in self._enabled_files()],
+                "files": [self._file_key(path) for path in files],
+                "command_overrides": self._commands_for_files(files),
                 "output": self.output_dir_edit.text().strip(),
                 "cube_vmd": self._current_vmd_settings(),
             }
@@ -1028,6 +1273,21 @@ class MultiwfnBatchPage(QWidget):
         if self.is_running() or not self._trial_signature:
             return
         if self._trial_signature == self._configuration_signature():
+            return
+        if (
+            not self._continue_requires_retrial
+            and self._trial_reference_signature
+            and self._trial_reference_signature == self._configuration_signature(reference_only=True)
+        ):
+            self._trial_signature = self._configuration_signature()
+            self._continue_requires_retrial = False
+            self.run_summary_label.setText(
+                "后续文件设置已更新，继续运行将使用首文件已确认的 VMD 参数。"
+                if self._trial_vmd_template else "后续文件设置已更新，可继续运行全部文件。"
+            )
+            self.continue_batch_button.setText(f"开始全部 {len(self._enabled_files())} 个文件")
+            self.continue_batch_button.setToolTip("使用各文件的当前命令执行完整批次。")
+            self.continue_batch_button.setVisible(True)
             return
         self._continue_requires_retrial = True
         self._trial_vmd_template = {}
@@ -1182,6 +1442,7 @@ class MultiwfnBatchPage(QWidget):
         preset = self._selected_preset()
         if preset is None:
             return
+        self._switch_command_scope(preset.id)
         self._loading_editor = True
         try:
             self.preset_name_edit.setText(preset.name)
@@ -1231,6 +1492,10 @@ class MultiwfnBatchPage(QWidget):
             return
         self._set_combo_to_id(current.id)
         self._load_selected_preset()
+        copied_commands = dict(self.command_overrides)
+        self._switch_command_scope(f"copy_{uuid.uuid4().hex}")
+        self.command_overrides = copied_commands
+        self._sync_file_command_labels()
         self._loading_editor = True
         try:
             self.preset_name_edit.setText(current.name + " 副本")
@@ -1255,6 +1520,7 @@ class MultiwfnBatchPage(QWidget):
         )
         if not self._resolve_unsaved_changes():
             return
+        self._switch_command_scope(f"draft_{uuid.uuid4().hex}")
         selected = self._selected_preset()
         return_id = selected.id if selected is not None else fallback_id
         common_extensions = [
@@ -1703,6 +1969,7 @@ class MultiwfnBatchPage(QWidget):
         except Exception as exc:
             qt_feedback.show_error(self, "流程保存失败", exc, stage="保存批量流程", file_path=self.presets_file)
             return False
+        self._file_command_drafts[preset.id] = dict(self.command_overrides)
         self._reload_presets(preset.id)
         self._append_log(f"已保存自定义流程：{preset.name}")
         return True
@@ -1824,7 +2091,52 @@ class MultiwfnBatchPage(QWidget):
 
     @staticmethod
     def _file_key(path: Path) -> str:
-        return os.path.normcase(str(Path(path).expanduser().resolve()))
+        return batch.input_file_key(path)
+
+    def _commands_for_files(self, files: list[Path]) -> dict[str, str]:
+        return {
+            self._file_key(path): self.command_overrides[self._file_key(path)]
+            for path in files if self._file_key(path) in self.command_overrides
+        }
+
+    def _switch_command_scope(self, scope: str) -> None:
+        if scope == self._command_scope:
+            return
+        self._file_command_drafts[self._command_scope] = dict(self.command_overrides)
+        self.command_overrides = dict(self._file_command_drafts.get(scope, {}))
+        self._command_scope = scope
+        self._sync_file_command_labels()
+
+    def _sync_file_command_labels(self) -> None:
+        count = 0
+        for row, path in enumerate(self.files):
+            custom = self._file_key(path) in self.command_overrides
+            count += int(custom)
+            if row < self.file_table.rowCount():
+                self.file_table.setItem(row, 3, QTableWidgetItem("单独命令" if custom else "统一命令"))
+        self.file_commands_summary.setText(
+            f"{count} 个文件使用单独命令，其余使用统一命令"
+            if count else "所有文件使用统一命令"
+        )
+
+    def _edit_file_commands(self) -> None:
+        if not self.files:
+            QMessageBox.information(self, "请先添加文件", "请在“选择文件”中添加待处理文件。")
+            return
+        try:
+            preset = self._preset_from_editor(preset_id=self._editor_preset_id or "unsaved_draft")
+        except batch.BatchValidationError as exc:
+            QMessageBox.information(self, "请先完善统一流程", str(exc))
+            return
+        selected_keys = {
+            self._file_key(self.files[item.row()])
+            for item in self.file_table.selectedItems()
+        }
+        dialog = FileCommandDialog(self.files, preset, self.command_overrides, self, selected_keys)
+        if dialog.exec() == QDialog.Accepted:
+            self.command_overrides = dict(dialog.overrides)
+            self._sync_file_command_labels()
+            self._invalidate_trial_if_needed()
 
     def _capture_file_enabled_states(self) -> None:
         for row, path in enumerate(self.files):
@@ -1901,6 +2213,7 @@ class MultiwfnBatchPage(QWidget):
             self.file_table.setItem(row, 1, name)
             self.file_table.setItem(row, 2, extension)
         self.file_table.blockSignals(False)
+        self._sync_file_command_labels()
         self.file_count_label.setText(f"{len(self.files)} 个文件")
         if hasattr(self, "continue_batch_button"):
             self._invalidate_trial_if_needed()
@@ -1912,11 +2225,16 @@ class MultiwfnBatchPage(QWidget):
             if 0 <= row < len(self.files):
                 removed = self.files.pop(row)
                 self.file_enabled.pop(self._file_key(removed), None)
+                self.command_overrides.pop(self._file_key(removed), None)
+                for overrides in self._file_command_drafts.values():
+                    overrides.pop(self._file_key(removed), None)
         self._refresh_file_table()
 
     def _clear_files(self) -> None:
         self.files.clear()
         self.file_enabled.clear()
+        self.command_overrides.clear()
+        self._file_command_drafts.clear()
         self._refresh_file_table()
 
     def _enabled_files(self) -> list[Path]:
@@ -1975,8 +2293,11 @@ class MultiwfnBatchPage(QWidget):
                 preset.variables,
                 prefix="preview",
                 vmd_settings=vmd_settings,
+                command_overrides=self._commands_for_files(files),
             )
             preview = batch.render_job_preview(plan, plan.jobs[0], exe)
+            for job in plan.jobs[1:]:
+                batch.render_job_preview(plan, job, exe)
         except Exception as exc:
             qt_feedback.show_error(self, "预检失败", exc, stage="批量任务预检")
             return
@@ -1984,6 +2305,7 @@ class MultiwfnBatchPage(QWidget):
         text = (
             f"流程：{preset.name}\n"
             f"文件：{len(files)} 个\n"
+            f"单独命令：{sum(job.stdin_template is not None for job in plan.jobs)} 个文件\n"
             f"结果根目录：{output_root}\n\n"
             f"首个任务命令：\n{command}\n\n"
             f"首个任务输入序列：\n{preview['stdin']}"
@@ -2002,7 +2324,8 @@ class MultiwfnBatchPage(QWidget):
             self.queue_table.insertRow(row)
             self.queue_table.setItem(row, 0, QTableWidgetItem(str(index)))
             file_item = QTableWidgetItem(path.name)
-            file_item.setToolTip(str(path))
+            command_source = "单独命令" if self._file_key(path) in self.command_overrides else "统一命令"
+            file_item.setToolTip(f"{path}\n{command_source}")
             self.queue_table.setItem(row, 1, file_item)
             self.queue_table.setItem(row, 2, QTableWidgetItem(STATUS_TEXT[batch.STATUS_PENDING]))
             self.queue_table.setItem(row, 3, QTableWidgetItem("-"))
@@ -2020,6 +2343,9 @@ class MultiwfnBatchPage(QWidget):
         if trial:
             files = files[:1]
             self._continue_requires_retrial = False
+            self._trial_signature = ""
+            self._trial_reference_signature = ""
+            self._trial_vmd_template = {}
         elif (
             self._trial_vmd_template
             and self._trial_signature
@@ -2059,6 +2385,7 @@ class MultiwfnBatchPage(QWidget):
             vmd_exe,
             vmd_settings,
             "trial" if trial else "batch",
+            command_overrides=self._commands_for_files(files),
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -2160,6 +2487,7 @@ class MultiwfnBatchPage(QWidget):
             total = len(self._enabled_files())
             if total > 1:
                 self._trial_signature = self._configuration_signature()
+                self._trial_reference_signature = self._configuration_signature(reference_only=True)
                 self._continue_requires_retrial = False
                 self.continue_batch_button.setText(
                     f"试运行通过，开始全部 {total} 个文件"
