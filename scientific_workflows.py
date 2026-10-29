@@ -286,6 +286,8 @@ def build_weak_interaction_scene_tcl(
         lines.extend(["color Element N iceblue", "mol modcolor 0 $MO_MOL Element"])
     if method == "igmh":
         lines.append("material change specular Opaque 0.300000")
+    if skeleton_style is not None:
+        lines.extend(orbital_vmd.build_skeleton_bonds_tcl(skeleton_style))
     lines.extend(["display resetview", "display update ui"])
     return "\n".join(lines) + "\n"
 

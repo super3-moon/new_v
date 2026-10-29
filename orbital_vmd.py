@@ -866,6 +866,35 @@ def _safe_style_token(value: object, fallback: str) -> str:
     return candidate if _SAFE_TOKEN_RE.fullmatch(candidate) else fallback
 
 
+def build_skeleton_bonds_tcl(style: Mapping[str, object]) -> list[str]:
+    """Optionally add independently colored bonds after the scientific surfaces.
+
+    Older presets have no separate bond layer and produce no new commands.
+    Keeping this layer last preserves the existing surface indices 1 and 2.
+    """
+    bonds = style.get("skeleton_bonds")
+    if bonds is None:
+        return []
+    if not isinstance(bonds, Mapping):
+        raise OrbitalVmdValidationError("Invalid skeleton bond settings.")
+    radius = _finite_float(bonds.get("radius", 0.1), "skeleton bond radius")
+    resolution = _finite_float(bonds.get("resolution", 24), "skeleton bond resolution", 4, 64)
+    color_id = _finite_float(bonds.get("color_id", 6), "skeleton bond color", 0, 32)
+    if not resolution.is_integer() or not color_id.is_integer():
+        raise OrbitalVmdValidationError("Skeleton bond resolution and color must be integers.")
+    if not 0 < radius <= 2:
+        raise OrbitalVmdValidationError("Skeleton bond radius must be positive and at most 2 Å.")
+    material = _safe_style_token(bonds.get("material"), "Opaque")
+    return [
+        "set VMA_BOND_REP [molinfo top get numreps]",
+        "mol addrep top",
+        f"mol modstyle $VMA_BOND_REP top Bonds {radius:.6f} {int(resolution)}",
+        "mol modselect $VMA_BOND_REP top all",
+        f"mol modcolor $VMA_BOND_REP top ColorID {int(color_id)}",
+        f"mol modmaterial $VMA_BOND_REP top {material}",
+    ]
+
+
 def _initial_signed_scene_tcl(
     cube_path: Path,
     style: Mapping[str, object],
@@ -920,6 +949,7 @@ def _initial_signed_scene_tcl(
         f"mol modcolor 2 $::MO_REFERENCE_MOL {negative}",
         f"mol modmaterial 2 $::MO_REFERENCE_MOL {material}",
     ]
+    lines.extend(build_skeleton_bonds_tcl(style))
     return lines
 
 

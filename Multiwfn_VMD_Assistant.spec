@@ -24,6 +24,7 @@ used_style_assets = {
     'skeleton_slim_cpk_verified.png',
     'skeleton_licorice_verified.png',
     'skeleton_monochrome_silver_verified.png',
+    'skeleton_gaussview_ball_stick_verified.png',
 }
 style_data = [
     (str(path), 'vmd_cube_styles')

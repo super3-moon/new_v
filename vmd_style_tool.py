@@ -19,6 +19,8 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import unquote, urlparse
 
+import orbital_vmd
+
 ROOT = Path(__file__).resolve().parent
 STYLE_DIR = ROOT / "vmd_cube_styles"
 CONFIG_FILE = ROOT / "vmd_style_tool_config.json"
@@ -669,11 +671,52 @@ _SKELETON_STYLE_RESEARCH_ENTRIES = [
         "sources": ["https://www.ks.uiuc.edu/Research/vmd/current/ug/node55.html"],
         "notes": "CPK ball-and-stick in uniform silver (ColorID 6).",
     },
+    {
+        "id": "skeleton_gaussview_ball_stick",
+        "name": "GaussView · Ball & Stick",
+        "image": "skeleton_gaussview_ball_stick_verified.png",
+        # C/H/N/O and bond RGB values were read from GaussView 6.0.16.
+        # Separate palette slots leave existing isosurface colors untouched.
+        "pre_commands": [
+            "color Name C 28",
+            "color Name H 29",
+            "color Name N 30",
+            "color Name O 31",
+            "color change rgb 28 0.556862745 0.556862745 0.556862745",
+            "color change rgb 29 0.800000000 0.800000000 0.800000000",
+            "color change rgb 30 0.098039216 0.098039216 0.898039216",
+            "color change rgb 31 0.898039216 0.000000000 0.000000000",
+            "color change rgb 32 0.800000000 0.800000000 0.800000000",
+            "material change ambient HardPlastic 0.100000",
+            "material change diffuse HardPlastic 0.750000",
+            "material change specular HardPlastic 0.600000",
+            "material change shininess HardPlastic 0.700000",
+            "material change mirror HardPlastic 0.000000",
+            "material change opacity HardPlastic 1.000000",
+            "material change outline HardPlastic 0.000000",
+            "material change outlinewidth HardPlastic 0.000000",
+            "material change transmode HardPlastic 0.000000",
+        ],
+        "rep0_commands": [
+            "mol modstyle 0 top CPK 0.750000 0.000000 24.000000 24.000000",
+            "mol modcolor 0 top Name",
+            "mol modmaterial 0 top HardPlastic",
+        ],
+        "skeleton_bonds": {
+            "radius": 0.10, "resolution": 24, "color_id": 32, "material": "HardPlastic",
+        },
+        "sources": [
+            "https://gaussian.com/wp-content/uploads/dl/gv6.pdf",
+            "https://www.ks.uiuc.edu/Research/vmd/current/ug/node62.html",
+        ],
+        "notes": "GaussView-inspired ball-and-stick with light-gray bonds.",
+    },
 ]
 _NEW_SKELETON_IDS = (
     "skeleton_slim_cpk",
     "skeleton_licorice",
     "skeleton_monochrome_silver",
+    "skeleton_gaussview_ball_stick",
 )
 _SKELETON_RESEARCH_BY_ID = {
     style["id"]: style for style in _SKELETON_STYLE_RESEARCH_ENTRIES
@@ -1154,6 +1197,8 @@ def compose_combo_style(skeleton_style: dict, iso_style: dict) -> dict:
         "bundle_id": iso_style["id"],
         "skeleton_id": skeleton_style["id"],
     }
+    if skeleton_style.get("skeleton_bonds"):
+        combo["skeleton_bonds"] = deepcopy(skeleton_style["skeleton_bonds"])
     for key in (
         "code",
         "surface_mode",
@@ -1614,6 +1659,11 @@ def build_custom_style_from_visual_parameters(
         "is_custom": True,
         "created_at": created_at,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
+        **(
+            {"skeleton_bonds": deepcopy(base_style["skeleton_bonds"])}
+            if base_style.get("skeleton_bonds") and skeleton_style == original["skeleton_style"]
+            else {}
+        ),
     }
 
 
@@ -2791,6 +2841,7 @@ def build_vmd_tcl(
     if not bool(style.get("preserve_vmd_autofit")):
         a("display distance -8.0")
         a("display height 10")
+    lines.extend(orbital_vmd.build_skeleton_bonds_tcl(style))
     a("")
     a("menu main on")
     a("menu graphics on")
